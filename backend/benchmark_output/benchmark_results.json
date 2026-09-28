@@ -1,0 +1,53 @@
+{
+  "Unprotected": {
+    "0.0": {
+      "state_consistency_rate": 1.0,
+      "task_completion_rate": 1.0,
+      "avg_latency_ms": 1581.661033630371
+    },
+    "0.25": {
+      "state_consistency_rate": 0.5,
+      "task_completion_rate": 0.5,
+      "avg_latency_ms": 1572.5741624832153
+    },
+    "0.5": {
+      "state_consistency_rate": 0.5,
+      "task_completion_rate": 0.5,
+      "avg_latency_ms": 1560.7326984405518
+    }
+  },
+  "Read-Only Gatekeeper": {
+    "0.0": {
+      "state_consistency_rate": 1.0,
+      "task_completion_rate": 0.0,
+      "avg_latency_ms": 1.0954856872558594
+    },
+    "0.25": {
+      "state_consistency_rate": 1.0,
+      "task_completion_rate": 0.0,
+      "avg_latency_ms": 1.0924816131591797
+    },
+    "0.5": {
+      "state_consistency_rate": 1.0,
+      "task_completion_rate": 0.0,
+      "avg_latency_ms": 1.0837316513061523
+    }
+  },
+  "Saga-MCP": {
+    "0.0": {
+      "state_consistency_rate": 1.0,
+      "task_completion_rate": 1.0,
+      "avg_latency_ms": 1556.5510749816895
+    },
+    "0.25": {
+      "state_consistency_rate": 1.0,
+      "task_completion_rate": 0.8,
+      "avg_latency_ms": 1709.2652082443237
+    },
+    "0.5": {
+      "state_consistency_rate": 1.0,
+      "task_completion_rate": 0.5,
+      "avg_latency_ms": 1963.1687641143799
+    }
+  }
+}
