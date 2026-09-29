@@ -65,7 +65,7 @@ pip install -r requirements.txt
 
 # 5. Install Ollama (only needed for the LLM-driven demo, not the
 #    core saga tests) - download from https://ollama.com, then:
-ollama pull llama3.1:8b            # or a smaller model if VRAM is tight
+ollama pull llama3.2:3b            # change OLLAMA_MODEL if using another model
 ```
 
 ---

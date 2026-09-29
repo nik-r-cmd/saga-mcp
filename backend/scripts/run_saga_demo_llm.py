@@ -48,6 +48,28 @@ TOOL_DESCRIPTIONS = {
     "seed_database": "Insert rows into the database. arguments: {rows: list of strings}",
 }
 
+TOOL_SCHEMAS = {
+    "create_branch": {
+        "type": "object",
+        "required": ["branch_name"],
+        "properties": {"branch_name": {"type": "string"}},
+    },
+    "commit_file": {
+        "type": "object",
+        "required": ["path", "content", "message"],
+        "properties": {
+            "path": {"type": "string"},
+            "content": {"type": "string"},
+            "message": {"type": "string"},
+        },
+    },
+    "seed_database": {
+        "type": "object",
+        "required": ["rows"],
+        "properties": {"rows": {"type": "array", "items": {"type": "string"}}},
+    },
+}
+
 
 def _force_remove_readonly(func, path, exc_info) -> None:
     os.chmod(path, stat.S_IWRITE)
@@ -137,6 +159,7 @@ def main() -> None:
         registry=registry,
         llm_call=llm_client.generate,
         tool_descriptions=TOOL_DESCRIPTIONS,
+        tool_schemas=TOOL_SCHEMAS,
     )
 
     try:

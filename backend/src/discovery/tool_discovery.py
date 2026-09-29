@@ -11,7 +11,11 @@ because it speaks the actual protocol rather than reading source code.
 from __future__ import annotations
 
 import asyncio
+import csv
+import os
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 from mcp import ClientSession, StdioServerParameters, stdio_client
 
@@ -23,8 +27,33 @@ class DiscoveredTool:
     input_schema: dict
 
 
+def normalize_discovery_args(args: list[str]) -> list[str]:
+    """Accept the UI's legacy comma-delimited argv as well as JSON arrays."""
+    if len(args) == 1 and args[0].lstrip().startswith("-m,"):
+        return [arg.strip() for arg in next(csv.reader([args[0]], skipinitialspace=True)) if arg.strip()]
+    return args
+
+
+def format_discovery_error(error: BaseException) -> str:
+    nested_errors = getattr(error, "exceptions", None)
+    if nested_errors:
+        return "; ".join(format_discovery_error(nested) for nested in nested_errors)
+    return str(error)
+
+
 async def _discover_async(command: str, args: list[str]) -> list[DiscoveredTool]:
-    params = StdioServerParameters(command=command, args=args)
+    # Child MCP servers often run as `python -m src.mcp_servers.*`.
+    # They must be launched from the backend package root so imports work
+    # reliably regardless of whatever directory the caller is running from.
+    backend_root = Path(__file__).resolve().parents[2]
+    if command.strip().lower() in {"python", "python.exe"}:
+        command = sys.executable
+    env = os.environ.copy()
+    existing_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = str(backend_root) + (os.pathsep + existing_pythonpath if existing_pythonpath else "")
+
+    params = StdioServerParameters(command=command, args=list(args), cwd=backend_root, env=env)
+
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()

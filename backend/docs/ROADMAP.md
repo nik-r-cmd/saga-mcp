@@ -2,16 +2,17 @@
 
 Timeline: Aug 24 - early October. Pivoted from the original confused-deputy
 / provenance design to a Saga (compensation-based rollback) engine for
-MCP tool chains - see project notes for why. Backend is now complete;
-frontend (Stage 6) is the only remaining stage.
+MCP tool chains - see project notes for why. The engine, local agent,
+Ollama path, control plane, and React Flow dashboard are implemented.
+The paper-sized 20-trial benchmark rerun remains an author-run step.
 
 ---
 
 ## Stage 0 - Environment & Repo Skeleton [COMPLETE]
 - [x] Folder structure, requirements.txt, git-ready layout
 - [x] pytest configured and passing (4/4 smoke tests)
-- [ ] Ollama installed and verified locally - do this on your own machine,
-      not verifiable in a sandbox without a GPU
+- [x] Ollama installed locally; `llama3.2:3b` completed a live generation
+  and an LLM-planned Git + SQLite success/rollback smoke run
 
 ---
 
@@ -56,23 +57,34 @@ sagas (10 legitimate, 10 induced-failure) against real git/SQLite:
 100% rollback success rate, 0% dead-letter rate, 0% false positive rate.
 26/26 tests passing across the whole repo.
 
-**Not yet verified - do this next, on your machine:**
-- [ ] Run `scripts/run_saga_demo_llm.py` with a real Ollama model and
-      confirm the LLM-generated plan executes and rolls back correctly
-- [ ] Re-run `scripts/run_evaluation.py` with `RUNS_PER_CONDITION` raised
-      to 15+ for your final report numbers
+**Verified:** the LLM-generated plan executed through independent Git and
+SQLite MCP servers; a success plan completed and an empty-seed plan rolled
+back the real branch. The agent task path now builds prompts from stored MCP
+descriptions/schemas and routes approved tools to their configured servers.
 
 ---
 
-## Stage 6 - Dashboard / Demo Frontend [ONLY REMAINING STAGE]
-**Goal:** A visual layer over your existing audit logs, built last on purpose.
+## Stage 6 - Dashboard / Demo Frontend [IMPLEMENTED]
+**Goal:** A live policy and execution view over the local agent and Saga engine.
 
-Tasks:
-- [ ] Simple live view: request list, saga status per run, allow/block/
-      compensated status, filter by agent
-- [ ] "Trigger induced failure" button for live demo purposes
-- [ ] Read directly from the audit trail SQLite DB already produced by
-      Stage 5 (no new backend logic needed here)
+Implemented:
+- [x] Tool discovery, inverse suggestions, confidence, approval, and saved
+  server/schema/argument-mapping configuration
+- [x] Authenticated local-agent status, LLM task dispatch, and live events
+- [x] Interactive React Flow event canvas and saga status counters
+- [x] Deterministic real-MCP rollback demo for reviewer figures
 
-**Acceptance criteria:** You can run a live saga from the UI and watch
-a genuine failure roll back on screen, in real time, in under 5 minutes.
+**Verified acceptance:** the backend integration test runs a real Git branch
+creation, real SQLite empty-seed failure, and real LIFO branch compensation;
+the normal local-agent path was also exercised with live Ollama inference.
+
+## Final Paper Benchmark [AUTHOR RUN]
+- [x] Harness defaults to 20 trials and exact 0/5/10 fault allocations
+  per condition; uses a paired schedule and monotonic timing
+- [x] State oracle checks both Git branches and SQLite records
+- [x] Read-only latency is excluded from executable-workflow comparison
+- [x] Raw schedules and per-trial results are saved separately under
+  `benchmark_output/paper_final/` without overwriting earlier artifacts
+- [x] Four-trial smoke run passed all conditions and verified metrics/output
+- [ ] Run the full `python -m scripts.run_benchmark` and replace the paper's
+  TBD result cells with values from `paper_final/benchmark_results.json`

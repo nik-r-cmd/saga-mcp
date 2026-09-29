@@ -24,13 +24,24 @@ import asyncio
 import json
 import os
 import sys
+import tempfile
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import websockets
 
-from agent.agent_logic import fetch_registry, run_discovery_for_servers
+from agent.agent_logic import (
+    build_invoker_from_servers,
+    build_registry_from_api_response,
+    build_tool_descriptions,
+    build_tool_schemas,
+    fetch_registry,
+    fetch_registry_entries,
+    run_discovery_for_servers,
+    run_rollback_demo,
+)
 from src.agents.planning_agent import PlanningAgent, PlanValidationError
 from src.llm.ollama_client import OllamaClient
 from src.orchestration.mcp_client import MultiServerToolInvoker, ServerConfig
@@ -77,6 +88,10 @@ async def main() -> None:
                 # pattern FastAPI itself uses for sync endpoint functions.
                 await loop.run_in_executor(None, _run_task_sync, loop, ws, http_url, token, message)
 
+            elif msg_type == "run_rollback_demo":
+                print("[agent] received deterministic rollback demo request")
+                await loop.run_in_executor(None, _run_rollback_demo_sync, loop, ws, http_url, token, message)
+
             else:
                 print(f"[agent] unknown message type: {msg_type}")
 
@@ -88,18 +103,34 @@ def _run_task_sync(loop: asyncio.AbstractEventLoop, ws, http_url: str, token: st
         asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "event", "payload": event})), loop)
 
     try:
-        registry = fetch_registry(http_url, token)
-        invoker = MultiServerToolInvoker()
-        invoker.register_tools(
-            ServerConfig(command=message["mcp_command"], args=message["mcp_args"]),
-            tool_names=registry.tool_names(),
-        )
+        approved = fetch_registry_entries(http_url, token)
+        registry = build_registry_from_api_response(approved)
+        server_configs = message.get("mcp_servers") or []
+        if server_configs:
+            invoker = build_invoker_from_servers(server_configs)
+            configured_tools = {
+                tool_name
+                for server in server_configs
+                for tool_name in server.get("tool_names", [])
+            }
+            available_tools = [name for name in registry.tool_names() if name in configured_tools]
+        else:
+            invoker = MultiServerToolInvoker()
+            invoker.register_tools(
+                ServerConfig(command=message["mcp_command"], args=message["mcp_args"]),
+                tool_names=registry.tool_names(),
+            )
+            available_tools = registry.tool_names()
+        if not available_tools:
+            raise ValueError("No approved tools have a configured MCP server.")
 
         llm_client = OllamaClient()
-        tool_descriptions = {name: name for name in registry.tool_names()}
+        allowed_tools = set(available_tools)
+        tool_descriptions = build_tool_descriptions(approved, allowed_tools)
         planner = PlanningAgent(
             agent_id="local-agent", registry=registry, llm_call=llm_client.generate,
             tool_descriptions=tool_descriptions,
+            tool_schemas=build_tool_schemas(approved, allowed_tools),
         )
         plan = planner.plan(message["task_description"])
 
@@ -122,7 +153,48 @@ def _run_task_sync(loop: asyncio.AbstractEventLoop, ws, http_url: str, token: st
         result = {"type": "task_result", "status": "agent_error", "error": str(exc)}
 
     asyncio.run_coroutine_threadsafe(ws.send(json.dumps(result)), loop)
-    print(f"[agent] task finished: {result.get('status')}")
+    print(f"[agent] task finished: {result.get('status')}: {result.get('error', '')}")
+
+
+def _run_rollback_demo_sync(
+    loop: asyncio.AbstractEventLoop, ws, http_url: str, token: str, message: dict
+) -> None:
+    def emit(event: dict) -> None:
+        asyncio.run_coroutine_threadsafe(
+            ws.send(json.dumps({"type": "event", "payload": event})),
+            loop,
+        )
+
+    database_path = str(Path(tempfile.gettempdir()) / f"saga-mcp-demo-{uuid.uuid4().hex}.sqlite3")
+    try:
+        registry = fetch_registry(http_url, token)
+        tracker = run_rollback_demo(
+            repo_path=message["repo_path"],
+            database_path=database_path,
+            registry=registry,
+            event_emitter=emit,
+        )
+        result = {
+            "type": "task_result",
+            "saga_id": tracker.record.saga_id,
+            "status": tracker.record.status.value,
+            "steps": [
+                {
+                    "tool_name": step.tool_name,
+                    "status": step.status.value,
+                    "failure_reason": step.failure_reason.value,
+                    "failure_detail": step.failure_detail,
+                }
+                for step in tracker.record.steps
+            ],
+        }
+    except Exception as exc:  # noqa: BLE001
+        result = {"type": "task_result", "status": "demo_error", "error": str(exc)}
+    finally:
+        Path(database_path).unlink(missing_ok=True)
+
+    asyncio.run_coroutine_threadsafe(ws.send(json.dumps(result)), loop)
+    print(f"[agent] rollback demo finished: {result.get('status')}")
 
 
 if __name__ == "__main__":

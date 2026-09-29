@@ -19,10 +19,11 @@
 2. In Lovable, connect Supabase (there's a native integration) and set
    up your login providers (Google, GitHub, email) in the Supabase
    dashboard under Authentication -> Providers
-3. Get your JWT secret: Supabase dashboard -> Settings -> API -> JWT
-   Settings -> copy "JWT Secret"
-4. Set it as an environment variable on your BACKEND host (not
-   frontend): `SUPABASE_JWT_SECRET=<value>`
+3. Set these environment variables on your BACKEND host (not frontend):
+   `SUPABASE_PROJECT_ID=<project ref>` and
+   `SUPABASE_URL=<project auth URL>`. The backend verifies modern ES256/
+   RS256 tokens using the project's published JWKS endpoint. Only legacy
+   HS256 tokens require `SUPABASE_JWT_SECRET`.
 
 ## 2. GitHub OAuth App (for repo scanning)
 
@@ -95,7 +96,7 @@ The hosted backend never needs Ollama - only wherever the local agent
 runs (each user's own machine) needs it, since planning happens there.
 
 1. Download from ollama.com, install
-2. `ollama pull llama3.1:8b` (or a smaller model if VRAM is limited)
+2. `ollama pull llama3.2:3b` (or set `OLLAMA_MODEL` to another installed model)
 3. Confirm it's running: `ollama list`
 
 ## What's genuinely still not done after all of this

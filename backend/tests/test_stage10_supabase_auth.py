@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import time
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import jwt
 import pytest
+from cryptography.hazmat.primitives.asymmetric import ec
 
 from src.auth.supabase_verifier import (
     InvalidSupabaseTokenError,
@@ -33,6 +36,33 @@ def test_valid_token_verifies_correctly(monkeypatch):
     user = verify_supabase_token(token)
     assert user.user_id == "user-abc-123"
     assert user.email == "reviewer@example.com"
+
+
+def test_es256_token_verifies_with_project_jwks(monkeypatch):
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    public_key = private_key.public_key()
+    now = int(time.time())
+    token = jwt.encode(
+        {
+            "sub": "user-abc-123",
+            "aud": "authenticated",
+            "iat": now,
+            "exp": now + 3600,
+        },
+        private_key,
+        algorithm="ES256",
+        headers={"kid": "test-key"},
+    )
+    monkeypatch.setenv("SUPABASE_URL", "https://project.example")
+    with patch(
+        "src.auth.supabase_verifier._get_jwks_client",
+        return_value=SimpleNamespace(
+            get_signing_key_from_jwt=lambda _: SimpleNamespace(key=public_key)
+        ),
+    ):
+        user = verify_supabase_token(token)
+
+    assert user.user_id == "user-abc-123"
 
 
 def test_token_signed_with_wrong_secret_rejected(monkeypatch):

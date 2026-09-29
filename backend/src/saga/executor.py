@@ -70,15 +70,13 @@ class SagaExecutor:
         the first failure and triggers rollback. Returns the tracker so
         callers can inspect the full record for the audit trail."""
 
+        for tool_name, _ in steps:
+            self._registry.get(tool_name)
+
         saga_id = str(uuid.uuid4())
         tracker = SagaTracker(saga_id=saga_id, registry=self._registry)
 
         for tool_name, arguments in steps:
-            # Fail loudly if the tool was never registered (blind spot #2
-            # in practice: you cannot safely run an action you don't know
-            # how to undo).
-            self._registry.get(tool_name)
-
             step = SagaStep(
                 step_id=str(uuid.uuid4()),
                 tool_name=tool_name,
@@ -108,7 +106,13 @@ class SagaExecutor:
         return tracker
 
     def _log(
-        self, saga_id: str, step: SagaStep, decision: str, reason: str, latency_ms: float
+        self,
+        saga_id: str,
+        step: SagaStep,
+        decision: str,
+        reason: str,
+        latency_ms: float,
+        event_tool_name: str | None = None,
     ) -> None:
         if self._audit_log is not None:
             self._audit_log.record(
@@ -132,7 +136,8 @@ class SagaExecutor:
                     "event_type": self._event_type_for(step.status),
                     "saga_id": saga_id,
                     "step_id": step.step_id,
-                    "tool_name": step.tool_name,
+                    "tool_name": event_tool_name or step.tool_name,
+                    "compensates": step.tool_name if event_tool_name else None,
                     "status": step.status.value,
                     "decision": decision,
                     "reason": reason,
@@ -172,11 +177,25 @@ class SagaExecutor:
             compensated = self._compensate_with_retries(step, spec)
             if compensated:
                 step.status = StepStatus.COMPENSATED
-                self._log(saga_id, step, "ALLOWED", "compensation succeeded", 0.0)
+                self._log(
+                    saga_id,
+                    step,
+                    "ALLOWED",
+                    "compensation succeeded",
+                    0.0,
+                    event_tool_name=spec.compensating_tool,
+                )
             else:
                 step.status = StepStatus.COMPENSATION_FAILED
                 any_compensation_failed = True
-                self._log(saga_id, step, "BLOCKED", "compensation failed after retries", 0.0)
+                self._log(
+                    saga_id,
+                    step,
+                    "BLOCKED",
+                    "compensation failed after retries",
+                    0.0,
+                    event_tool_name=spec.compensating_tool,
+                )
                 self._write_dead_letter(saga_id, step, spec.compensating_tool)
 
         if any_compensation_failed:

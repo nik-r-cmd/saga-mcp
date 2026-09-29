@@ -1,0 +1,441 @@
+{
+  "configuration": {
+    "trials_per_condition": 4,
+    "failure_rates": [
+      0.0,
+      0.25,
+      0.5
+    ],
+    "fault_schedules": {
+      "0.0": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "0.25": [
+        false,
+        false,
+        true,
+        false
+      ],
+      "0.5": [
+        true,
+        true,
+        false,
+        false
+      ]
+    },
+    "trial_conditions": 36,
+    "mcp_workflow_executions": 24,
+    "read_only_policy_evaluations": 12,
+    "read_only_trials_are_policy_evaluations": true,
+    "state_oracle": "Git branch set and SQLite records table",
+    "latency_clock": "time.perf_counter",
+    "latency_comparison": [
+      "Unprotected",
+      "Saga-MCP"
+    ],
+    "llm_inference": false
+  },
+  "summary": {
+    "Unprotected": {
+      "0.0": {
+        "state_consistency_rate": 1.0,
+        "task_completion_rate": 1.0,
+        "avg_latency_ms": 3521.8468500097515,
+        "latency_comparable": true
+      },
+      "0.25": {
+        "state_consistency_rate": 0.75,
+        "task_completion_rate": 0.75,
+        "avg_latency_ms": 3296.746024992899,
+        "latency_comparable": true
+      },
+      "0.5": {
+        "state_consistency_rate": 0.5,
+        "task_completion_rate": 0.5,
+        "avg_latency_ms": 3296.1977000086335,
+        "latency_comparable": true
+      }
+    },
+    "Read-Only Gatekeeper": {
+      "0.0": {
+        "state_consistency_rate": 1.0,
+        "task_completion_rate": 0.0,
+        "avg_latency_ms": null,
+        "latency_comparable": false
+      },
+      "0.25": {
+        "state_consistency_rate": 1.0,
+        "task_completion_rate": 0.0,
+        "avg_latency_ms": null,
+        "latency_comparable": false
+      },
+      "0.5": {
+        "state_consistency_rate": 1.0,
+        "task_completion_rate": 0.0,
+        "avg_latency_ms": null,
+        "latency_comparable": false
+      }
+    },
+    "Saga-MCP": {
+      "0.0": {
+        "state_consistency_rate": 1.0,
+        "task_completion_rate": 1.0,
+        "avg_latency_ms": 3191.699500006507,
+        "latency_comparable": true
+      },
+      "0.25": {
+        "state_consistency_rate": 1.0,
+        "task_completion_rate": 0.75,
+        "avg_latency_ms": 3619.2080499895383,
+        "latency_comparable": true
+      },
+      "0.5": {
+        "state_consistency_rate": 1.0,
+        "task_completion_rate": 0.5,
+        "avg_latency_ms": 3909.924525010865,
+        "latency_comparable": true
+      }
+    }
+  },
+  "trials": {
+    "Unprotected": {
+      "0.0": [
+        {
+          "state_consistent": true,
+          "task_completed": true,
+          "latency_ms": 3479.874899960123,
+          "fault_observed": false,
+          "trial_index": 1,
+          "fault_assigned": false
+        },
+        {
+          "state_consistent": true,
+          "task_completed": true,
+          "latency_ms": 3342.5773000344634,
+          "fault_observed": false,
+          "trial_index": 2,
+          "fault_assigned": false
+        },
+        {
+          "state_consistent": true,
+          "task_completed": true,
+          "latency_ms": 3563.359300023876,
+          "fault_observed": false,
+          "trial_index": 3,
+          "fault_assigned": false
+        },
+        {
+          "state_consistent": true,
+          "task_completed": true,
+          "latency_ms": 3701.5759000205435,
+          "fault_observed": false,
+          "trial_index": 4,
+          "fault_assigned": false
+        }
+      ],
+      "0.25": [
+        {
+          "state_consistent": true,
+          "task_completed": true,
+          "latency_ms": 3520.6560000078753,
+          "fault_observed": false,
+          "trial_index": 1,
+          "fault_assigned": false
+        },
+        {
+          "state_consistent": true,
+          "task_completed": true,
+          "latency_ms": 3432.3765999870375,
+          "fault_observed": false,
+          "trial_index": 2,
+          "fault_assigned": false
+        },
+        {
+          "state_consistent": false,
+          "task_completed": false,
+          "latency_ms": 3203.6525000003166,
+          "fault_observed": true,
+          "trial_index": 3,
+          "fault_assigned": true
+        },
+        {
+          "state_consistent": true,
+          "task_completed": true,
+          "latency_ms": 3030.2989999763668,
+          "fault_observed": false,
+          "trial_index": 4,
+          "fault_assigned": false
+        }
+      ],
+      "0.5": [
+        {
+          "state_consistent": false,
+          "task_completed": false,
+          "latency_ms": 3109.3293000012636,
+          "fault_observed": true,
+          "trial_index": 1,
+          "fault_assigned": true
+        },
+        {
+          "state_consistent": false,
+          "task_completed": false,
+          "latency_ms": 3023.8033999921754,
+          "fault_observed": true,
+          "trial_index": 2,
+          "fault_assigned": true
+        },
+        {
+          "state_consistent": true,
+          "task_completed": true,
+          "latency_ms": 3278.5525000072084,
+          "fault_observed": false,
+          "trial_index": 3,
+          "fault_assigned": false
+        },
+        {
+          "state_consistent": true,
+          "task_completed": true,
+          "latency_ms": 3773.1056000338867,
+          "fault_observed": false,
+          "trial_index": 4,
+          "fault_assigned": false
+        }
+      ]
+    },
+    "Read-Only Gatekeeper": {
+      "0.0": [
+        {
+          "state_consistent": true,
+          "task_completed": false,
+          "latency_ms": 0.009300012607127428,
+          "fault_observed": false,
+          "policy_rejected": true,
+          "trial_index": 1,
+          "fault_assigned": false
+        },
+        {
+          "state_consistent": true,
+          "task_completed": false,
+          "latency_ms": 0.006599992047995329,
+          "fault_observed": false,
+          "policy_rejected": true,
+          "trial_index": 2,
+          "fault_assigned": false
+        },
+        {
+          "state_consistent": true,
+          "task_completed": false,
+          "latency_ms": 0.008700008038431406,
+          "fault_observed": false,
+          "policy_rejected": true,
+          "trial_index": 3,
+          "fault_assigned": false
+        },
+        {
+          "state_consistent": true,
+          "task_completed": false,
+          "latency_ms": 0.01090002479031682,
+          "fault_observed": false,
+          "policy_rejected": true,
+          "trial_index": 4,
+          "fault_assigned": false
+        }
+      ],
+      "0.25": [
+        {
+          "state_consistent": true,
+          "task_completed": false,
+          "latency_ms": 0.007399998139590025,
+          "fault_observed": false,
+          "policy_rejected": true,
+          "trial_index": 1,
+          "fault_assigned": false
+        },
+        {
+          "state_consistent": true,
+          "task_completed": false,
+          "latency_ms": 0.01109996810555458,
+          "fault_observed": false,
+          "policy_rejected": true,
+          "trial_index": 2,
+          "fault_assigned": false
+        },
+        {
+          "state_consistent": true,
+          "task_completed": false,
+          "latency_ms": 0.006799993570894003,
+          "fault_observed": false,
+          "policy_rejected": true,
+          "trial_index": 3,
+          "fault_assigned": true
+        },
+        {
+          "state_consistent": true,
+          "task_completed": false,
+          "latency_ms": 0.007299997378140688,
+          "fault_observed": false,
+          "policy_rejected": true,
+          "trial_index": 4,
+          "fault_assigned": false
+        }
+      ],
+      "0.5": [
+        {
+          "state_consistent": true,
+          "task_completed": false,
+          "latency_ms": 0.006699992809444666,
+          "fault_observed": false,
+          "policy_rejected": true,
+          "trial_index": 1,
+          "fault_assigned": true
+        },
+        {
+          "state_consistent": true,
+          "task_completed": false,
+          "latency_ms": 0.008500006515532732,
+          "fault_observed": false,
+          "policy_rejected": true,
+          "trial_index": 2,
+          "fault_assigned": true
+        },
+        {
+          "state_consistent": true,
+          "task_completed": false,
+          "latency_ms": 0.00790000194683671,
+          "fault_observed": false,
+          "policy_rejected": true,
+          "trial_index": 3,
+          "fault_assigned": false
+        },
+        {
+          "state_consistent": true,
+          "task_completed": false,
+          "latency_ms": 0.007599999662488699,
+          "fault_observed": false,
+          "policy_rejected": true,
+          "trial_index": 4,
+          "fault_assigned": false
+        }
+      ]
+    },
+    "Saga-MCP": {
+      "0.0": [
+        {
+          "state_consistent": true,
+          "task_completed": true,
+          "latency_ms": 2917.2641999903135,
+          "fault_observed": false,
+          "saga_status": "completed",
+          "trial_index": 1,
+          "fault_assigned": false
+        },
+        {
+          "state_consistent": true,
+          "task_completed": true,
+          "latency_ms": 3343.2127999840304,
+          "fault_observed": false,
+          "saga_status": "completed",
+          "trial_index": 2,
+          "fault_assigned": false
+        },
+        {
+          "state_consistent": true,
+          "task_completed": true,
+          "latency_ms": 3264.7972000413574,
+          "fault_observed": false,
+          "saga_status": "completed",
+          "trial_index": 3,
+          "fault_assigned": false
+        },
+        {
+          "state_consistent": true,
+          "task_completed": true,
+          "latency_ms": 3241.5238000103272,
+          "fault_observed": false,
+          "saga_status": "completed",
+          "trial_index": 4,
+          "fault_assigned": false
+        }
+      ],
+      "0.25": [
+        {
+          "state_consistent": true,
+          "task_completed": true,
+          "latency_ms": 3144.889899995178,
+          "fault_observed": false,
+          "saga_status": "completed",
+          "trial_index": 1,
+          "fault_assigned": false
+        },
+        {
+          "state_consistent": true,
+          "task_completed": true,
+          "latency_ms": 3344.902499986347,
+          "fault_observed": false,
+          "saga_status": "completed",
+          "trial_index": 2,
+          "fault_assigned": false
+        },
+        {
+          "state_consistent": true,
+          "task_completed": false,
+          "latency_ms": 4620.853999978863,
+          "fault_observed": true,
+          "saga_status": "rolled_back",
+          "trial_index": 3,
+          "fault_assigned": true
+        },
+        {
+          "state_consistent": true,
+          "task_completed": true,
+          "latency_ms": 3366.1857999977656,
+          "fault_observed": false,
+          "saga_status": "completed",
+          "trial_index": 4,
+          "fault_assigned": false
+        }
+      ],
+      "0.5": [
+        {
+          "state_consistent": true,
+          "task_completed": false,
+          "latency_ms": 4825.871500011999,
+          "fault_observed": true,
+          "saga_status": "rolled_back",
+          "trial_index": 1,
+          "fault_assigned": true
+        },
+        {
+          "state_consistent": true,
+          "task_completed": false,
+          "latency_ms": 4399.318900017533,
+          "fault_observed": true,
+          "saga_status": "rolled_back",
+          "trial_index": 2,
+          "fault_assigned": true
+        },
+        {
+          "state_consistent": true,
+          "task_completed": true,
+          "latency_ms": 3275.8728000335395,
+          "fault_observed": false,
+          "saga_status": "completed",
+          "trial_index": 3,
+          "fault_assigned": false
+        },
+        {
+          "state_consistent": true,
+          "task_completed": true,
+          "latency_ms": 3138.6348999803886,
+          "fault_observed": false,
+          "saga_status": "completed",
+          "trial_index": 4,
+          "fault_assigned": false
+        }
+      ]
+    }
+  }
+}

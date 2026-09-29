@@ -11,8 +11,14 @@ import sys
 
 import pytest
 
+from src.api.main import DiscoverRequest, discover_tools_endpoint
 from src.discovery.auto_pair import AutoPairSuggester
-from src.discovery.tool_discovery import DiscoveredTool, discover_tools
+from src.discovery.tool_discovery import (
+    DiscoveredTool,
+    discover_tools,
+    format_discovery_error,
+    normalize_discovery_args,
+)
 
 
 # ---------------------------------------------------------------------
@@ -63,6 +69,27 @@ def test_seed_wipe_pair_suggested():
     assert by_name["wipe_database"].suggested_compensating_tool == "seed_database"
 
 
+def test_legacy_comma_delimited_discovery_args_are_normalized():
+    args = [r'-m, src.mcp_servers.git_server, D:\Users\Nikhitha Reddy\saga-mcp']
+
+    assert normalize_discovery_args(args) == [
+        "-m",
+        "src.mcp_servers.git_server",
+        r"D:\Users\Nikhitha Reddy\saga-mcp",
+    ]
+    assert normalize_discovery_args(["--label", "one,two"]) == ["--label", "one,two"]
+
+
+def test_nested_discovery_errors_report_leaf_cause():
+    class NestedError(Exception):
+        def __init__(self, *exceptions):
+            self.exceptions = exceptions
+
+    error = NestedError(NestedError(RuntimeError("MCP child exited")))
+
+    assert format_discovery_error(error) == "MCP child exited"
+
+
 # ---------------------------------------------------------------------
 # Real, live discovery against our own actual MCP server (integration)
 # ---------------------------------------------------------------------
@@ -91,6 +118,16 @@ def test_real_discovery_against_our_own_git_server(tmp_path):
 
 
 @pytest.mark.integration
+def test_real_discovery_with_python_command_uses_current_environment(tmp_path):
+    tools = discover_tools(
+        command="python",
+        args=["-m", "src.mcp_servers.git_server", str(tmp_path)],
+    )
+
+    assert "create_branch" in {tool.name for tool in tools}
+
+
+@pytest.mark.integration
 def test_real_discovery_output_feeds_correctly_into_auto_pair(tmp_path):
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir()
@@ -104,3 +141,18 @@ def test_real_discovery_output_feeds_correctly_into_auto_pair(tmp_path):
 
     assert by_name["create_branch"].suggested_compensating_tool == "delete_branch"
     assert by_name["commit_file"].suggested_compensating_tool == "revert_last_commit"
+
+
+@pytest.mark.integration
+def test_discover_endpoint_returns_tools_and_pairing_suggestions(tmp_path):
+    response = discover_tools_endpoint(
+        DiscoverRequest(
+            command="python",
+            args=["-m", "src.mcp_servers.git_server", str(tmp_path)],
+        ),
+        user=object(),
+    )
+    tools_by_name = {tool["name"]: tool for tool in response["tools"]}
+
+    assert tools_by_name["create_branch"]["suggested_compensating_tool"] == "delete_branch"
+    assert tools_by_name["create_branch"]["suggested_category"] == "compensable"

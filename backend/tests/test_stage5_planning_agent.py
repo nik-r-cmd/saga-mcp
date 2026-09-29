@@ -100,3 +100,55 @@ def test_malformed_step_missing_arguments_key_is_rejected():
     agent = PlanningAgent("planner", make_registry(), fake_llm, TOOL_DESCRIPTIONS)
     with pytest.raises(PlanValidationError, match="malformed"):
         agent.plan("create a branch")
+
+
+def test_json_encoded_array_argument_is_normalized_from_live_model_output():
+    def fake_llm(system, user):
+        return '[{"tool":"seed_database","arguments":{"rows":"[\\"alpha-01\\",\\"beta-01\\"]"}}]'
+
+    agent = PlanningAgent(
+        "planner",
+        make_registry(),
+        fake_llm,
+        TOOL_DESCRIPTIONS,
+        tool_schemas={
+            "seed_database": {
+                "type": "object",
+                "required": ["rows"],
+                "properties": {"rows": {"type": "array", "items": {"type": "string"}}},
+            }
+        },
+    )
+
+    assert agent.plan("seed rows") == [
+        ("seed_database", {"rows": ["alpha-01", "beta-01"]})
+    ]
+
+
+def test_schema_type_violation_retries_once_with_validation_feedback():
+    responses = iter([
+        '[{"tool":"seed_database","arguments":{"rows":7}}]',
+        '[{"tool":"seed_database","arguments":{"rows":["a","b"]}}]',
+    ])
+    prompts = []
+
+    def fake_llm(system, user):
+        prompts.append(user)
+        return next(responses)
+
+    agent = PlanningAgent(
+        "planner",
+        make_registry(),
+        fake_llm,
+        TOOL_DESCRIPTIONS,
+        tool_schemas={
+            "seed_database": {
+                "required": ["rows"],
+                "properties": {"rows": {"type": "array", "items": {"type": "string"}}},
+            }
+        },
+    )
+
+    assert agent.plan("seed two rows") == [("seed_database", {"rows": ["a", "b"]})]
+    assert len(prompts) == 2
+    assert "must be array" in prompts[1]

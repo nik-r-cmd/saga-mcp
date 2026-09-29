@@ -25,6 +25,7 @@ Run with:
 from __future__ import annotations
 
 import asyncio
+import sys
 from dataclasses import asdict
 from typing import Literal
 
@@ -49,7 +50,7 @@ from src.auth.supabase_verifier import (
 from src.discovery.auto_pair import AutoPairSuggester
 from src.discovery.github_scanner import GitHubAPIError, GitHubRepoScanner
 from src.discovery.registry_store import ApprovedPairing, RegistryStore
-from src.discovery.tool_discovery import discover_tools
+from src.discovery.tool_discovery import discover_tools, format_discovery_error, normalize_discovery_args
 from src.llm.ollama_client import OllamaClient
 from src.logging_utils.audit_log import AuditLog
 from src.orchestration.mcp_client import MultiServerToolInvoker, ServerConfig
@@ -193,12 +194,28 @@ class ApproveRequest(BaseModel):
     tool_name: str
     category: Literal["compensable", "pivot"]
     compensating_tool: str | None = None
+    server_command: str | None = None
+    server_args: list[str] = []
+    compensation_arg_mapping: dict[str, str] | None = None
+    tool_description: str = ""
+    input_schema: dict = {}
+
+
+class ServerToolConfig(BaseModel):
+    command: str
+    args: list[str]
+    tool_names: list[str]
 
 
 class RunTaskRequest(BaseModel):
     task_description: str
     mcp_command: str
     mcp_args: list[str] = []
+    mcp_servers: list[ServerToolConfig] = []
+
+
+class RollbackDemoRequest(BaseModel):
+    repo_path: str
 
 
 class DiscoverRequest(BaseModel):
@@ -274,7 +291,16 @@ def get_registry(user: SupabaseUser = Depends(get_current_user)) -> dict:
 def approve(req: ApproveRequest, user: SupabaseUser = Depends(get_current_user)) -> dict:
     try:
         _store.approve(
-            ApprovedPairing(tool_name=req.tool_name, category=req.category, compensating_tool=req.compensating_tool)
+            ApprovedPairing(
+                tool_name=req.tool_name,
+                category=req.category,
+                compensating_tool=req.compensating_tool,
+                server_command=req.server_command,
+                server_args=req.server_args,
+                compensation_arg_mapping=req.compensation_arg_mapping,
+                tool_description=req.tool_description,
+                input_schema=req.input_schema,
+            )
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -290,6 +316,27 @@ def reject(tool_name: str, user: SupabaseUser = Depends(get_current_user)) -> di
 # ---------------------------------------------------------------------
 # Task execution
 # ---------------------------------------------------------------------
+
+@app.get("/agent/status")
+def get_agent_status(user: SupabaseUser = Depends(get_current_user)) -> dict:
+    return {"connected": agents.is_connected(user.user_id)}
+
+
+@app.post("/run-rollback-demo")
+def run_rollback_demo_endpoint(
+    req: RollbackDemoRequest,
+    user: SupabaseUser = Depends(get_current_user),
+) -> dict:
+    if not agents.is_connected(user.user_id):
+        raise HTTPException(status_code=409, detail="Start the local agent before running the rollback demo.")
+    if not req.repo_path.strip():
+        raise HTTPException(status_code=400, detail="A local Git repository path is required.")
+    agents.send(
+        user.user_id,
+        {"type": "run_rollback_demo", "repo_path": req.repo_path},
+    )
+    return {"status": "dispatched"}
+
 
 @app.post("/run-task")
 def run_task_via_agent(req: RunTaskRequest, user: SupabaseUser = Depends(get_current_user)) -> dict:
@@ -309,6 +356,7 @@ def run_task_via_agent(req: RunTaskRequest, user: SupabaseUser = Depends(get_cur
             "task_description": req.task_description,
             "mcp_command": req.mcp_command,
             "mcp_args": req.mcp_args,
+            "mcp_servers": [server.model_dump() for server in req.mcp_servers],
         },
     )
     return {"status": "dispatched"}
@@ -322,13 +370,37 @@ def run_task_local(req: RunTaskRequest, user: SupabaseUser = Depends(get_current
     hosted multi-user flow (use /run-task for that)."""
     registry = _store.to_compensation_registry()
     invoker = MultiServerToolInvoker()
-    all_tool_names = [p.tool_name for p in _store.list_approvals()]
-    invoker.register_tools(ServerConfig(command=req.mcp_command, args=req.mcp_args), tool_names=all_tool_names)
+    if req.mcp_servers:
+        for server in req.mcp_servers:
+            invoker.register_tools(
+                ServerConfig(command=server.command, args=server.args),
+                tool_names=server.tool_names,
+            )
+        configured_tools = {name for server in req.mcp_servers for name in server.tool_names}
+    else:
+        configured_tools = {pairing.tool_name for pairing in _store.list_approvals()}
+        invoker.register_tools(
+            ServerConfig(command=req.mcp_command, args=req.mcp_args),
+            tool_names=list(configured_tools),
+        )
 
     llm_client = OllamaClient()
-    tool_descriptions = {p.tool_name: p.tool_name for p in _store.list_approvals()}
+    tool_descriptions = {
+        pairing.tool_name: pairing.tool_name
+        for pairing in _store.list_approvals()
+        if pairing.tool_name in configured_tools
+    }
+    tool_schemas = {
+        pairing.tool_name: pairing.input_schema
+        for pairing in _store.list_approvals()
+        if pairing.tool_name in configured_tools
+    }
     planner = PlanningAgent(
-        agent_id=user.user_id, registry=registry, llm_call=llm_client.generate, tool_descriptions=tool_descriptions
+        agent_id=user.user_id,
+        registry=registry,
+        llm_call=llm_client.generate,
+        tool_descriptions=tool_descriptions,
+        tool_schemas=tool_schemas,
     )
     try:
         plan = planner.plan(req.task_description)
@@ -352,25 +424,40 @@ def run_task_local(req: RunTaskRequest, user: SupabaseUser = Depends(get_current
 
 @app.post("/discover")
 def discover_tools_endpoint(req: DiscoverRequest, user=Depends(get_current_user)) -> dict:
-    raw_tools = discover_tools(req.command, req.args)
-    suggester = AutoPairSuggester()
+    command = (req.command or "").strip()
+    if not command:
+        raise HTTPException(status_code=400, detail="Command is required for tool discovery.")
+    if command.lower() == "python":
+        command = sys.executable
+
+    try:
+        raw_tools = discover_tools(command, normalize_discovery_args(req.args))
+    except Exception as exc:  # noqa: BLE001
+        details = format_discovery_error(exc)
+        raise HTTPException(
+            status_code=502,
+            detail=f"Tool discovery failed: {details}. Check the backend log for MCP server startup errors.",
+        ) from exc
+
+    suggestions_by_tool = {
+        suggestion.tool_name: suggestion
+        for suggestion in AutoPairSuggester().suggest(raw_tools)
+    }
     approved_map = {p.tool_name: p for p in _store.list_approvals()}
 
     results = []
     for t in raw_tools:
-        name = t.name if hasattr(t, "name") else t["name"]
-        desc = t.description if hasattr(t, "description") else t.get("description", "")
-        suggestion = suggester.suggest(name, desc)
-
-        category = suggestion.category.value if hasattr(suggestion.category, "value") else suggestion.category
-        confidence = suggestion.confidence.value if hasattr(suggestion.confidence, "value") else suggestion.confidence
+        name = t.name
+        desc = t.description
+        suggestion = suggestions_by_tool[name]
 
         results.append({
             "name": name,
             "description": desc,
-            "suggested_category": category,
-            "suggested_compensating_tool": suggestion.compensating_tool,
-            "confidence": confidence,
+            "input_schema": t.input_schema,
+            "suggested_category": suggestion.suggested_category,
+            "suggested_compensating_tool": suggestion.suggested_compensating_tool,
+            "confidence": suggestion.confidence,
             "already_approved": name in approved_map
         })
     return {"tools": results}

@@ -11,6 +11,19 @@ from __future__ import annotations
 
 from src.config import OllamaConfig, OLLAMA
 
+_PLAN_FORMAT_SCHEMA = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "tool": {"type": "string"},
+            "arguments": {"type": "object"},
+        },
+        "required": ["tool", "arguments"],
+        "additionalProperties": False,
+    },
+}
+
 
 class OllamaClient:
     def __init__(self, config: OllamaConfig = OLLAMA) -> None:
@@ -25,6 +38,7 @@ class OllamaClient:
     def generate(self, system_prompt: str, user_prompt: str) -> str:
         response = self._client.chat(
             model=self._config.model,
+            format=_PLAN_FORMAT_SCHEMA,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},

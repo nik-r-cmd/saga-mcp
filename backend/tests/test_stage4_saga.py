@@ -71,13 +71,16 @@ def test_registry_rejects_compensable_tool_without_compensation():
 
 def test_unregistered_tool_raises_loudly():
     registry = make_registry()
+    calls = []
 
     def invoker(tool_name, args):
+        calls.append(tool_name)
         return {"status": "ok"}
 
     executor = SagaExecutor(registry, invoker)
     with pytest.raises(UnregisteredToolError):
-        executor.run([("deploy_to_prod_unregistered", {})])
+        executor.run([("create_branch", {}), ("deploy_to_prod_unregistered", {})])
+    assert calls == []
 
 
 def test_pivot_step_blocks_further_rollback():

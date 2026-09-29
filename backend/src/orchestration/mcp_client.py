@@ -15,7 +15,10 @@ not an oversight.
 from __future__ import annotations
 
 import asyncio
+import os
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from mcp import ClientSession, StdioServerParameters, stdio_client
@@ -62,7 +65,19 @@ class MultiServerToolInvoker:
     async def _call_async(
         server: ServerConfig, tool_name: str, arguments: dict[str, Any]
     ) -> dict:
-        params = StdioServerParameters(command=server.command, args=server.args)
+        backend_root = Path(__file__).resolve().parents[2]
+        env = os.environ.copy()
+        existing_pythonpath = env.get("PYTHONPATH")
+        env["PYTHONPATH"] = str(backend_root) + (os.pathsep + existing_pythonpath if existing_pythonpath else "")
+        command = server.command
+        if command.strip().lower() in {"python", "python.exe"}:
+            command = sys.executable
+        params = StdioServerParameters(
+            command=command,
+            args=server.args,
+            cwd=backend_root,
+            env=env,
+        )
         async with stdio_client(params) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
