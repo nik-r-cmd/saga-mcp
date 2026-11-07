@@ -38,50 +38,86 @@ Real MCP servers: git_server.py, db_server.py
 AuditLog (SQLite)  -->  evaluation/metrics.py  -->  results table
 ```
 
-## Status: backend complete, frontend remaining
+## Status: backend and dashboard implemented
 
-Every stage through Stage 5 (LLM planning + evaluation harness) is built
-and tested. Only Stage 6 (the dashboard UI) is left - see
-`docs/ROADMAP.md` for full detail on what was built and why.
+The repository contains the Saga engine, authenticated API, user-local
+execution agent, real MCP integrations, and the evaluation harness. The
+React dashboard is maintained in the separate `transactional-nexus`
+frontend repository. See `docs/ROADMAP.md` for implementation status and
+the recorded benchmark results.
 
 ---
 
 ## Setup (do this once)
 
-```bash
-# 1. Confirm git is installed
+From the repository root in PowerShell:
+
+```powershell
 git --version
-
-# 2. Confirm Python 3.10+
-python3 --version
-
-# 3. Create and activate a virtual environment
-cd mcp-privilege-verification
-python3 -m venv venv
-source venv/bin/activate          # Windows: venv\Scripts\activate
-
-# 4. Install dependencies
-pip install -r requirements.txt
-
-# 5. Install Ollama (only needed for the LLM-driven demo, not the
-#    core saga tests) - download from https://ollama.com, then:
-ollama pull llama3.2:3b            # change OLLAMA_MODEL if using another model
+python --version
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+if (!(Test-Path backend\.env)) { Copy-Item backend\.env.example backend\.env }
 ```
+
+Set `SUPABASE_PROJECT_ID` and `SUPABASE_URL` in `backend\.env` for
+authenticated API use. Install Ollama and run `ollama pull llama3.2:3b`
+only if you plan to execute LLM-planned tasks; the deterministic tests
+and benchmark do not need Ollama.
+
+## Run the application locally
+
+Start the API from the `backend` directory:
+
+```powershell
+Set-Location "<path-to-repository>\backend"
+..\.venv\Scripts\python.exe -m uvicorn src.api.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Start the dashboard in a separate terminal from the frontend repository:
+
+```powershell
+Set-Location "<path-to-transactional-nexus>"
+$env:VITE_BACKEND_URL = "http://localhost:8000"
+$env:VITE_SUPABASE_URL = "https://<project-ref>.supabase.co"
+$env:VITE_SUPABASE_PUBLISHABLE_KEY = "<publishable-key>"
+npm run dev
+```
+
+Sign in through the configured Supabase project. For task execution,
+install and start Ollama, then start the user-local agent in another
+terminal:
+
+```powershell
+Set-Location "<path-to-repository>\backend"
+$env:SAGA_BACKEND_HTTP_URL = "http://localhost:8000"
+$env:SAGA_BACKEND_WS_URL = "ws://localhost:8000"
+$env:SAGA_SUPABASE_TOKEN = "<access-token-from-your-Supabase-session>"
+$env:SAGA_SUPABASE_REFRESH_TOKEN = "<refresh-token-from-the-same-session>"
+$env:SAGA_SUPABASE_URL = "https://<project-ref>.supabase.co"
+$env:SAGA_SUPABASE_PUBLISHABLE_KEY = "<publishable-key>"
+..\.venv\Scripts\python.exe -m agent.saga_agent
+```
+
+The agent connects back to the API and executes MCP servers on that
+user's machine. It refreshes expired access tokens and keeps rotated
+tokens in memory while running. Do not commit any session token or put
+it in frontend source.
 
 ---
 
 ## Step-by-step: what to run, in order
 
-### 1. Run the full test suite (should take under 15 seconds)
+Run the following commands from the `backend` directory.
+
+### 1. Run the full test suite
 ```bash
-pytest -v
+..\.venv\Scripts\python.exe -m pytest -q
 ```
-Expect: **26 passed**. If anything fails, stop here and fix it before
-moving on - nothing downstream should be trusted if this doesn't pass.
 
 ### 2. Run the deterministic saga demo (no LLM needed)
 ```bash
-python -m scripts.run_saga_demo
+..\.venv\Scripts\python.exe -m scripts.run_saga_demo
 ```
 This creates a throwaway git repo + SQLite DB, runs a hardcoded 3-step
 saga where the last step genuinely fails, and shows the real rollback.
@@ -90,7 +126,7 @@ identical.
 
 ### 3. Run the evaluation harness (produces your results table)
 ```bash
-python -m scripts.run_evaluation
+..\.venv\Scripts\python.exe -m scripts.run_evaluation
 ```
 Runs 10 legitimate + 10 induced-failure sagas against real git/SQLite
 and prints a metrics table: rollback success rate, dead-letter rate,
@@ -100,7 +136,7 @@ generating the final numbers for your report.
 
 ### 4. Run the LLM-driven demo (requires Ollama running)
 ```bash
-python -m scripts.run_saga_demo_llm
+..\.venv\Scripts\python.exe -m scripts.run_saga_demo_llm
 ```
 Make sure Ollama is running in the background first (it usually starts
 automatically after install; if not, run `ollama serve` in a separate
@@ -119,7 +155,7 @@ After running step 3 or 4, a `logs/audit_trail.sqlite3` file exists with
 every tool call and decision logged. You can inspect it with any SQLite
 browser, or:
 ```bash
-python -c "
+..\.venv\Scripts\python.exe -c "
 from src.logging_utils.audit_log import AuditLog
 from src.config import AUDIT_DB_PATH
 log = AuditLog(db_path=AUDIT_DB_PATH)

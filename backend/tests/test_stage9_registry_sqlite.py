@@ -47,6 +47,31 @@ def test_reject_removes_approval(store):
     assert store.list_approvals() == []
 
 
+def test_approvals_are_isolated_by_user(store):
+    store.approve(
+        ApprovedPairing(
+            tool_name="create_branch",
+            category="compensable",
+            compensating_tool="delete_branch",
+        ),
+        user_id="alice",
+    )
+    store.approve(
+        ApprovedPairing(tool_name="create_branch", category="pivot"),
+        user_id="bob",
+    )
+
+    alice = store.list_approvals("alice")
+    bob = store.list_approvals("bob")
+    assert len(alice) == len(bob) == 1
+    assert alice[0].category == "compensable"
+    assert bob[0].category == "pivot"
+
+    store.reject("create_branch", user_id="bob")
+    assert len(store.list_approvals("alice")) == 1
+    assert store.list_approvals("bob") == []
+
+
 def test_to_compensation_registry_builds_working_registry(store):
     store.approve(ApprovedPairing(tool_name="create_branch", category="compensable", compensating_tool="delete_branch"))
     store.approve(ApprovedPairing(tool_name="send_email", category="pivot"))
@@ -75,6 +100,8 @@ def test_approval_persists_server_and_compensation_mapping(store):
             server_command="python",
             server_args=["-m", "src.mcp_servers.db_server", "demo.sqlite3"],
             compensation_arg_mapping={},
+            compensation_result_arg_mapping={"record_ids": "record_ids"},
+            compensation_idempotent=True,
             tool_description="Insert database records.",
             input_schema={"type": "object", "properties": {"rows": {"type": "array"}}},
         )
@@ -84,11 +111,14 @@ def test_approval_persists_server_and_compensation_mapping(store):
     assert pairing.server_command == "python"
     assert pairing.server_args[-1] == "demo.sqlite3"
     assert pairing.compensation_arg_mapping == {}
+    assert pairing.compensation_result_arg_mapping == {"record_ids": "record_ids"}
+    assert pairing.compensation_idempotent is True
     assert pairing.tool_description == "Insert database records."
     assert pairing.input_schema["properties"]["rows"]["type"] == "array"
     mapper = store.to_compensation_registry().get("seed_database").compensation_arg_mapper
     assert mapper is not None
     assert mapper({"rows": []}) == {}
+    assert store.to_compensation_registry().get("seed_database").idempotent is True
 
 
 def test_migrates_existing_registry_schema(tmp_path):
@@ -107,3 +137,4 @@ def test_migrates_existing_registry_schema(tmp_path):
     assert pairing.tool_name == "create_branch"
     assert pairing.server_command is None
     assert pairing.server_args == []
+    assert RegistryStore(database).list_approvals("alice") == []

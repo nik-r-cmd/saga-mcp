@@ -25,6 +25,7 @@ def make_registry() -> CompensationRegistry:
             tool_name="create_branch",
             category=ActionCategory.COMPENSABLE,
             compensating_tool="delete_branch",
+            idempotent=True,
         )
     )
     reg.register(ActionSpec(tool_name="delete_branch", category=ActionCategory.COMPENSABLE, compensating_tool="noop"))
@@ -161,7 +162,7 @@ def test_detects_protocol_level_exception():
     detector = FailureDetector()
     is_failure, reason, _ = detector.check(None, protocol_error=TimeoutError("mcp call timed out"))
     assert is_failure is True
-    assert reason.value == "protocol_error"
+    assert reason.value == "timeout"
 
 
 def test_healthy_response_is_not_a_failure():
@@ -182,11 +183,12 @@ def test_compensation_uses_mapped_arguments_not_forward_arguments():
         ActionSpec(
             tool_name="commit_file",
             category=ActionCategory.COMPENSABLE,
-            compensating_tool="revert_last_commit",
-            compensation_arg_mapper=lambda args: {},  # revert takes no args
+            compensating_tool="revert_commit",
+            compensation_arg_mapper=lambda args: {},
+            compensation_result_arg_mapping={"commit_sha": "commit_sha"},
         )
     )
-    registry.register(ActionSpec(tool_name="revert_last_commit", category=ActionCategory.COMPENSABLE, compensating_tool="noop"))
+    registry.register(ActionSpec(tool_name="revert_commit", category=ActionCategory.COMPENSABLE, compensating_tool="noop"))
     registry.register(ActionSpec(tool_name="seed_database", category=ActionCategory.COMPENSABLE, compensating_tool="noop"))
     registry.register(ActionSpec(tool_name="noop", category=ActionCategory.PIVOT))
 
@@ -196,6 +198,8 @@ def test_compensation_uses_mapped_arguments_not_forward_arguments():
         calls_seen.append((tool_name, args))
         if tool_name == "seed_database":
             return {"status": "error", "message": "disk full"}
+        if tool_name == "commit_file":
+            return {"status": "ok", "commit_sha": "a" * 40}
         return {"status": "ok"}
 
     executor = SagaExecutor(registry, invoker)
@@ -207,10 +211,8 @@ def test_compensation_uses_mapped_arguments_not_forward_arguments():
     )
 
     assert tracker.record.status == SagaStatus.ROLLED_BACK
-    revert_call = next(c for c in calls_seen if c[0] == "revert_last_commit")
-    # This is the actual bug fix: revert_last_commit must be called with
-    # {} (per the mapper), NOT with commit_file's {path, content, message}
-    assert revert_call[1] == {}
+    revert_call = next(c for c in calls_seen if c[0] == "revert_commit")
+    assert revert_call[1] == {"commit_sha": "a" * 40}
 
 
 def test_no_mapper_falls_back_to_identity_for_backward_compatibility():

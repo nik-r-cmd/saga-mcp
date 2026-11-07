@@ -14,7 +14,7 @@ from src.auth.supabase_verifier import (
     verify_supabase_token,
 )
 
-TEST_SECRET = "test-secret-matching-what-supabase-would-issue"
+TEST_SECRET = "test-secret-matching-what-supabase-would-issue-with-at-least-32-bytes"
 
 
 def _make_token(secret: str = TEST_SECRET, **overrides) -> str:
@@ -67,7 +67,7 @@ def test_es256_token_verifies_with_project_jwks(monkeypatch):
 
 def test_token_signed_with_wrong_secret_rejected(monkeypatch):
     monkeypatch.setenv("SUPABASE_JWT_SECRET", TEST_SECRET)
-    token = _make_token(secret="a-completely-different-secret")
+    token = _make_token(secret="a-completely-different-secret-that-is-long-enough")
     with pytest.raises(InvalidSupabaseTokenError):
         verify_supabase_token(token)
 

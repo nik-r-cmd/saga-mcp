@@ -11,7 +11,7 @@ What this script does:
      genuinely rejects (status=error) - not a scripted failure, an
      actual validation failure the tool itself produces.
   5. Watches the executor roll back commit_file and create_branch for
-     real: revert_last_commit actually runs `git reset --hard`, and
+     real: revert_commit creates a targeted, non-destructive inverse commit, and
      delete_branch actually runs `git branch -D`.
   6. Prints the before/after repo and DB state so you can see the
      rollback happened, not just read a log line claiming it did.
@@ -88,7 +88,7 @@ def main() -> None:
             command=sys.executable,
             args=["-m", "src.mcp_servers.git_server", str(repo_dir)],
         ),
-        tool_names=["create_branch", "delete_branch", "commit_file", "revert_last_commit"],
+        tool_names=["create_branch", "delete_branch", "commit_file", "revert_commit"],
     )
     invoker.register_tools(
         ServerConfig(
@@ -113,21 +113,19 @@ def main() -> None:
         ActionSpec(
             tool_name="commit_file",
             category=ActionCategory.COMPENSABLE,
-            compensating_tool="revert_last_commit",
-            # revert_last_commit takes NO arguments - commit_file's
-            # {path, content, message} must NOT be forwarded to it.
+            compensating_tool="revert_commit",
             compensation_arg_mapper=lambda args: {},
+            compensation_result_arg_mapping={"commit_sha": "commit_sha"},
         )
     )
-    registry.register(ActionSpec(tool_name="revert_last_commit", category=ActionCategory.COMPENSABLE, compensating_tool="noop_for_revert"))
+    registry.register(ActionSpec(tool_name="revert_commit", category=ActionCategory.COMPENSABLE, compensating_tool="noop_for_revert"))
     registry.register(
         ActionSpec(
             tool_name="seed_database",
             category=ActionCategory.COMPENSABLE,
             compensating_tool="wipe_database",
-            # wipe_database takes NO arguments - seed_database's {rows: [...]}
-            # must NOT be forwarded to it.
             compensation_arg_mapper=lambda args: {},
+            compensation_result_arg_mapping={"record_ids": "record_ids"},
         )
     )
     registry.register(ActionSpec(tool_name="wipe_database", category=ActionCategory.COMPENSABLE, compensating_tool="noop_for_wipe"))

@@ -8,14 +8,16 @@ Setup:
     export SAGA_BACKEND_HTTP_URL="https://your-backend.onrender.com"
     export SAGA_BACKEND_WS_URL="wss://your-backend.onrender.com"
     export SAGA_SUPABASE_TOKEN="<paste the JWT from your logged-in session>"
+    export SAGA_SUPABASE_REFRESH_TOKEN="<paste its refresh_token>"
+    export SAGA_SUPABASE_URL="https://your-project.supabase.co"
+    export SAGA_SUPABASE_PUBLISHABLE_KEY="<your Supabase publishable key>"
 
 Run:
     python -m agent.saga_agent
 
-Getting SAGA_SUPABASE_TOKEN: log into the web app, open browser dev
-tools -> Application -> Local Storage -> find the Supabase auth entry
-and copy the access_token value. (A proper `saga-mcp login` CLI command
-that does this automatically is a good next addition - not built yet.)
+Get both tokens from the Supabase auth session stored by the web app.
+The local agent refreshes expired access tokens and keeps rotated tokens
+in memory while it is running. It never writes them to disk.
 """
 
 from __future__ import annotations
@@ -33,18 +35,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import websockets
 
 from agent.agent_logic import (
-    build_invoker_from_servers,
+    SupabaseSessionError,
+    build_invoker_from_approvals,
     build_registry_from_api_response,
     build_tool_descriptions,
     build_tool_schemas,
     fetch_registry,
     fetch_registry_entries,
-    run_discovery_for_servers,
+    fetch_websocket_ticket,
+    run_discovery_for_servers_async,
     run_rollback_demo,
 )
 from src.agents.planning_agent import PlanningAgent, PlanValidationError
 from src.llm.ollama_client import OllamaClient
-from src.orchestration.mcp_client import MultiServerToolInvoker, ServerConfig
+from src.logging_utils.audit_log import AuditLog
+from src.saga.dead_letter import DeadLetterQueue
 from src.saga.executor import SagaExecutor
 
 
@@ -56,12 +61,25 @@ def _require_env(name: str) -> str:
     return value
 
 
+def _send_final_result(loop: asyncio.AbstractEventLoop, ws, result: dict) -> None:
+    future = asyncio.run_coroutine_threadsafe(ws.send(json.dumps(result)), loop)
+    try:
+        future.result(timeout=10)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[agent] ERROR: could not send task result: {exc}")
+
+
 async def main() -> None:
     http_url = _require_env("SAGA_BACKEND_HTTP_URL")
     ws_url = _require_env("SAGA_BACKEND_WS_URL")
     token = _require_env("SAGA_SUPABASE_TOKEN")
 
-    uri = f"{ws_url}/ws/agent?token={token}"
+    try:
+        ticket = fetch_websocket_ticket(http_url, token)
+    except SupabaseSessionError as exc:
+        print(f"[agent] ERROR: {exc}")
+        raise SystemExit(1) from exc
+    uri = f"{ws_url.rstrip('/')}/ws/agent?ticket={ticket}"
     print(f"[agent] connecting to {ws_url}/ws/agent ...")
 
     async with websockets.connect(uri) as ws:
@@ -74,8 +92,16 @@ async def main() -> None:
 
             if msg_type == "scan_local_configs":
                 print(f"[agent] running discovery for {len(message['servers'])} server(s)...")
-                results = run_discovery_for_servers(message["servers"])
-                await ws.send(json.dumps({"type": "discovery_result", "tools_by_server": results}))
+                results = await run_discovery_for_servers_async(message["servers"])
+                await ws.send(
+                    json.dumps(
+                        {
+                            "type": "discovery_result",
+                            "request_id": message.get("request_id"),
+                            "tools_by_server": results,
+                        }
+                    )
+                )
                 print("[agent] discovery results sent back.")
 
             elif msg_type == "run_task":
@@ -97,32 +123,24 @@ async def main() -> None:
 
 
 def _run_task_sync(loop: asyncio.AbstractEventLoop, ws, http_url: str, token: str, message: dict) -> None:
+    execution_events: list[dict] = []
+
     def emit(event: dict) -> None:
-        # Called from THIS worker thread - schedule the actual send back
-        # onto the agent's main event loop thread-safely.
-        asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "event", "payload": event})), loop)
+        execution_events.append(event)
+        future = asyncio.run_coroutine_threadsafe(
+            ws.send(json.dumps({"type": "event", "payload": event})), loop
+        )
+        future.result(timeout=10)
 
     try:
         approved = fetch_registry_entries(http_url, token)
         registry = build_registry_from_api_response(approved)
-        server_configs = message.get("mcp_servers") or []
-        if server_configs:
-            invoker = build_invoker_from_servers(server_configs)
-            configured_tools = {
-                tool_name
-                for server in server_configs
-                for tool_name in server.get("tool_names", [])
-            }
-            available_tools = [name for name in registry.tool_names() if name in configured_tools]
-        else:
-            invoker = MultiServerToolInvoker()
-            invoker.register_tools(
-                ServerConfig(command=message["mcp_command"], args=message["mcp_args"]),
-                tool_names=registry.tool_names(),
-            )
-            available_tools = registry.tool_names()
+        invoker, available_tools = build_invoker_from_approvals(approved)
         if not available_tools:
-            raise ValueError("No approved tools have a configured MCP server.")
+            raise ValueError(
+                "No approved tools have a saved MCP server configuration. "
+                "Rediscover and approve the tools before running a task."
+            )
 
         llm_client = OllamaClient()
         allowed_tools = set(available_tools)
@@ -134,7 +152,13 @@ def _run_task_sync(loop: asyncio.AbstractEventLoop, ws, http_url: str, token: st
         )
         plan = planner.plan(message["task_description"])
 
-        executor = SagaExecutor(registry, invoker, event_emitter=emit)
+        executor = SagaExecutor(
+            registry,
+            invoker,
+            audit_log=AuditLog(),
+            dead_letter_queue=DeadLetterQueue(),
+            event_emitter=emit,
+        )
         tracker = executor.run(plan, agent_id="local-agent")
 
         result = {
@@ -145,6 +169,7 @@ def _run_task_sync(loop: asyncio.AbstractEventLoop, ws, http_url: str, token: st
                 {"tool_name": s.tool_name, "status": s.status.value, "failure_reason": s.failure_reason.value}
                 for s in tracker.record.steps
             ],
+            "events": execution_events,
         }
     except PlanValidationError as exc:
         result = {"type": "task_result", "status": "plan_rejected", "error": str(exc)}
@@ -152,18 +177,23 @@ def _run_task_sync(loop: asyncio.AbstractEventLoop, ws, http_url: str, token: st
         # than letting the agent crash silently
         result = {"type": "task_result", "status": "agent_error", "error": str(exc)}
 
-    asyncio.run_coroutine_threadsafe(ws.send(json.dumps(result)), loop)
+    result["request_id"] = message.get("request_id")
+    _send_final_result(loop, ws, result)
     print(f"[agent] task finished: {result.get('status')}: {result.get('error', '')}")
 
 
 def _run_rollback_demo_sync(
     loop: asyncio.AbstractEventLoop, ws, http_url: str, token: str, message: dict
 ) -> None:
+    execution_events: list[dict] = []
+
     def emit(event: dict) -> None:
-        asyncio.run_coroutine_threadsafe(
+        execution_events.append(event)
+        future = asyncio.run_coroutine_threadsafe(
             ws.send(json.dumps({"type": "event", "payload": event})),
             loop,
         )
+        future.result(timeout=10)
 
     database_path = str(Path(tempfile.gettempdir()) / f"saga-mcp-demo-{uuid.uuid4().hex}.sqlite3")
     try:
@@ -187,13 +217,15 @@ def _run_rollback_demo_sync(
                 }
                 for step in tracker.record.steps
             ],
+            "events": execution_events,
         }
     except Exception as exc:  # noqa: BLE001
         result = {"type": "task_result", "status": "demo_error", "error": str(exc)}
     finally:
         Path(database_path).unlink(missing_ok=True)
 
-    asyncio.run_coroutine_threadsafe(ws.send(json.dumps(result)), loop)
+    result["request_id"] = message.get("request_id")
+    _send_final_result(loop, ws, result)
     print(f"[agent] rollback demo finished: {result.get('status')}")
 
 

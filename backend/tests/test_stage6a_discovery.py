@@ -11,7 +11,9 @@ import sys
 
 import pytest
 
-from src.api.main import DiscoverRequest, discover_tools_endpoint
+import src.api.main as api
+from src.api.task_store import TaskResultStore
+from src.auth.supabase_verifier import SupabaseUser
 from src.discovery.auto_pair import AutoPairSuggester
 from src.discovery.tool_discovery import (
     DiscoveredTool,
@@ -108,7 +110,7 @@ def test_real_discovery_against_our_own_git_server(tmp_path):
     assert "create_branch" in names
     assert "delete_branch" in names
     assert "commit_file" in names
-    assert "revert_last_commit" in names
+    assert "revert_commit" in names
 
     # Every discovered tool should carry a non-empty description, since
     # our servers declare docstrings - this catches a broken/empty
@@ -140,19 +142,31 @@ def test_real_discovery_output_feeds_correctly_into_auto_pair(tmp_path):
     by_name = {s.tool_name: s for s in suggestions}
 
     assert by_name["create_branch"].suggested_compensating_tool == "delete_branch"
-    assert by_name["commit_file"].suggested_compensating_tool == "revert_last_commit"
+    assert by_name["commit_file"].suggested_compensating_tool == "revert_commit"
 
 
-@pytest.mark.integration
-def test_discover_endpoint_returns_tools_and_pairing_suggestions(tmp_path):
-    response = discover_tools_endpoint(
-        DiscoverRequest(
+def test_discover_endpoint_dispatches_to_connected_local_agent(tmp_path, monkeypatch):
+    sent = []
+    monkeypatch.setattr(api, "_task_results", TaskResultStore(tmp_path / "tasks.sqlite3"))
+    monkeypatch.setattr(api.agents, "is_connected", lambda _: True)
+    monkeypatch.setattr(
+        api.agents,
+        "send",
+        lambda user_id, message: sent.append((user_id, message)),
+    )
+    response = api.discover_tools_endpoint(
+        api.DiscoverRequest(
             command="python",
             args=["-m", "src.mcp_servers.git_server", str(tmp_path)],
         ),
-        user=object(),
+        user=SupabaseUser(user_id="discovery-test-user", email=None),
     )
-    tools_by_name = {tool["name"]: tool for tool in response["tools"]}
 
-    assert tools_by_name["create_branch"]["suggested_compensating_tool"] == "delete_branch"
-    assert tools_by_name["create_branch"]["suggested_category"] == "compensable"
+    assert response["status"] == "dispatched"
+    assert sent[0][0] == "discovery-test-user"
+    assert sent[0][1]["type"] == "scan_local_configs"
+    assert sent[0][1]["servers"][0]["args"] == [
+        "-m",
+        "src.mcp_servers.git_server",
+        str(tmp_path),
+    ]

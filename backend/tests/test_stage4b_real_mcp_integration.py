@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from agent.agent_logic import build_invoker_from_servers, run_rollback_demo
+from src.mcp_servers import git_server
 from src.orchestration.mcp_client import MultiServerToolInvoker, ServerConfig
 from src.saga.executor import SagaExecutor
 from src.saga.models import ActionCategory, ActionSpec, SagaStatus, StepStatus
@@ -55,17 +56,19 @@ def _build_registry() -> CompensationRegistry:
         ActionSpec(
             tool_name="commit_file",
             category=ActionCategory.COMPENSABLE,
-            compensating_tool="revert_last_commit",
+            compensating_tool="revert_commit",
             compensation_arg_mapper=lambda args: {},
+            compensation_result_arg_mapping={"commit_sha": "commit_sha"},
         )
     )
-    registry.register(ActionSpec(tool_name="revert_last_commit", category=ActionCategory.COMPENSABLE, compensating_tool="_noop"))
+    registry.register(ActionSpec(tool_name="revert_commit", category=ActionCategory.COMPENSABLE, compensating_tool="_noop"))
     registry.register(
         ActionSpec(
             tool_name="seed_database",
             category=ActionCategory.COMPENSABLE,
             compensating_tool="wipe_database",
             compensation_arg_mapper=lambda args: {},
+            compensation_result_arg_mapping={"record_ids": "record_ids"},
         )
     )
     registry.register(
@@ -102,7 +105,7 @@ def _build_invoker(repo_dir: Path, db_path: Path) -> MultiServerToolInvoker:
     invoker = MultiServerToolInvoker()
     invoker.register_tools(
         ServerConfig(command=sys.executable, args=["-m", "src.mcp_servers.git_server", str(repo_dir)]),
-        tool_names=["create_branch", "delete_branch", "commit_file", "revert_last_commit"],
+        tool_names=["create_branch", "delete_branch", "commit_file", "revert_commit"],
     )
     invoker.register_tools(
         ServerConfig(command=sys.executable, args=["-m", "src.mcp_servers.db_server", str(db_path)]),
@@ -151,14 +154,33 @@ def test_real_saga_failure_genuinely_rolls_back_git_state(real_repo, tmp_path):
     assert tracker.record.steps[1].status == StepStatus.COMPENSATED
     assert tracker.record.steps[2].status == StepStatus.FAILED
 
-    # The real git state must be back to exactly what it was before.
+    # The original commit and file state are preserved; rollback adds a
+    # non-destructive inverse commit instead of resetting history.
     branches = subprocess.run(["git", "branch"], cwd=real_repo, capture_output=True, text=True).stdout
     assert "feature/fail" not in branches
 
     commits_after = subprocess.run(
         ["git", "log", "--oneline"], cwd=real_repo, capture_output=True, text=True
     ).stdout.strip().splitlines()
-    assert commits_before == commits_after
+    assert all(commit in commits_after for commit in commits_before)
+    assert len(commits_after) == len(commits_before) + 2
+
+
+def test_commit_file_refuses_to_overwrite_an_ignored_file(real_repo, monkeypatch):
+    ignored_file = real_repo / "ignored.txt"
+    gitignore = real_repo / ".gitignore"
+    gitignore.write_text("ignored.txt\n")
+    subprocess.run(["git", "add", ".gitignore"], cwd=real_repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "ignore local file"], cwd=real_repo, check=True)
+    ignored_file.write_text("keep this data\n")
+    monkeypatch.setattr(git_server, "REPO_PATH", real_repo)
+
+    result = git_server.commit_file("ignored.txt", "replace it", "should be rejected")
+
+    assert result["status"] == "error"
+    assert "existing untracked file" in result["message"]
+    assert ignored_file.read_text() == "keep this data\n"
+    assert not (real_repo / "notes.txt").exists()
 
 
 @pytest.mark.integration

@@ -324,66 +324,169 @@
       "Unprotected",
       "Saga-MCP"
     ],
-    "llm_inference": false
+    "llm_inference": false,
+    "confidence_intervals": {
+      "rates": "95% Wilson score interval",
+      "latency_mean": "95% normal-approximation interval using sample standard deviation"
+    }
   },
   "summary": {
     "Unprotected": {
       "0.0": {
         "state_consistency_rate": 1.0,
+        "state_consistency_95ci": [
+          0.9630065017930143,
+          1.0
+        ],
         "task_completion_rate": 1.0,
+        "task_completion_95ci": [
+          0.9630065017930143,
+          1.0
+        ],
         "avg_latency_ms": 3556.3705589977326,
+        "avg_latency_95ci_ms": [
+          3387.1763630934,
+          3725.564754902065
+        ],
         "latency_comparable": true
       },
       "0.25": {
         "state_consistency_rate": 0.75,
+        "state_consistency_95ci": [
+          0.656955364519384,
+          0.8245478863771232
+        ],
         "task_completion_rate": 0.75,
+        "task_completion_95ci": [
+          0.656955364519384,
+          0.8245478863771232
+        ],
         "avg_latency_ms": 4098.367974004941,
+        "avg_latency_95ci_ms": [
+          3813.648391468928,
+          4383.087556540954
+        ],
         "latency_comparable": true
       },
       "0.5": {
         "state_consistency_rate": 0.5,
+        "state_consistency_95ci": [
+          0.4038315303659957,
+          0.5961684696340044
+        ],
         "task_completion_rate": 0.5,
+        "task_completion_95ci": [
+          0.4038315303659957,
+          0.5961684696340044
+        ],
         "avg_latency_ms": 4210.553693998954,
+        "avg_latency_95ci_ms": [
+          3862.94194311353,
+          4558.165444884378
+        ],
         "latency_comparable": true
       }
     },
     "Read-Only Gatekeeper": {
       "0.0": {
         "state_consistency_rate": 1.0,
+        "state_consistency_95ci": [
+          0.9630065017930143,
+          1.0
+        ],
         "task_completion_rate": 0.0,
+        "task_completion_95ci": [
+          0.0,
+          0.03699349820698566
+        ],
         "avg_latency_ms": null,
+        "avg_latency_95ci_ms": null,
         "latency_comparable": false
       },
       "0.25": {
         "state_consistency_rate": 1.0,
+        "state_consistency_95ci": [
+          0.9630065017930143,
+          1.0
+        ],
         "task_completion_rate": 0.0,
+        "task_completion_95ci": [
+          0.0,
+          0.03699349820698566
+        ],
         "avg_latency_ms": null,
+        "avg_latency_95ci_ms": null,
         "latency_comparable": false
       },
       "0.5": {
         "state_consistency_rate": 1.0,
+        "state_consistency_95ci": [
+          0.9630065017930143,
+          1.0
+        ],
         "task_completion_rate": 0.0,
+        "task_completion_95ci": [
+          0.0,
+          0.03699349820698566
+        ],
         "avg_latency_ms": null,
+        "avg_latency_95ci_ms": null,
         "latency_comparable": false
       }
     },
     "Saga-MCP": {
       "0.0": {
         "state_consistency_rate": 1.0,
+        "state_consistency_95ci": [
+          0.9630065017930143,
+          1.0
+        ],
         "task_completion_rate": 1.0,
+        "task_completion_95ci": [
+          0.9630065017930143,
+          1.0
+        ],
         "avg_latency_ms": 3506.4865370019106,
+        "avg_latency_95ci_ms": [
+          3251.199997889537,
+          3761.7730761142843
+        ],
         "latency_comparable": true
       },
       "0.25": {
         "state_consistency_rate": 1.0,
+        "state_consistency_95ci": [
+          0.9630065017930143,
+          1.0
+        ],
         "task_completion_rate": 0.75,
+        "task_completion_95ci": [
+          0.656955364519384,
+          0.8245478863771232
+        ],
         "avg_latency_ms": 3616.5819310001098,
+        "avg_latency_95ci_ms": [
+          3465.1578802155354,
+          3768.005981784684
+        ],
         "latency_comparable": true
       },
       "0.5": {
         "state_consistency_rate": 1.0,
+        "state_consistency_95ci": [
+          0.9630065017930143,
+          1.0
+        ],
         "task_completion_rate": 0.5,
+        "task_completion_95ci": [
+          0.4038315303659957,
+          0.5961684696340044
+        ],
         "avg_latency_ms": 3844.268297004164,
+        "avg_latency_95ci_ms": [
+          3661.165173616405,
+          4027.3714203919235
+        ],
         "latency_comparable": true
       }
     }

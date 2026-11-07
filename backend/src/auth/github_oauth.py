@@ -12,10 +12,12 @@ GitHub account.
 from __future__ import annotations
 
 import os
+from urllib.parse import urlencode
 
 import httpx
 
 GITHUB_OAUTH_TOKEN_URL = "https://github.com/login/oauth/access_token"
+GITHUB_OAUTH_AUTHORIZE_URL = "https://github.com/login/oauth/authorize"
 
 
 class GitHubOAuthConfigError(Exception):
@@ -26,21 +28,40 @@ class GitHubOAuthExchangeError(Exception):
     pass
 
 
-def exchange_code_for_token(code: str) -> str:
+def _client_id() -> str:
     client_id = os.environ.get("GITHUB_OAUTH_CLIENT_ID")
-    client_secret = os.environ.get("GITHUB_OAUTH_CLIENT_SECRET")
-    if not client_id or not client_secret:
+    if not client_id:
         raise GitHubOAuthConfigError(
-            "GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET must be "
-            "set. Register a GitHub OAuth App at "
+            "GITHUB_OAUTH_CLIENT_ID must be set. Register a GitHub OAuth App at "
             "https://github.com/settings/developers to get these."
+        )
+    return client_id
+
+
+def github_authorization_url(state: str) -> str:
+    redirect_uri = os.environ.get("GITHUB_OAUTH_REDIRECT_URI")
+    if not redirect_uri:
+        raise GitHubOAuthConfigError("GITHUB_OAUTH_REDIRECT_URI must point to the frontend callback route.")
+    return f"{GITHUB_OAUTH_AUTHORIZE_URL}?{urlencode({'client_id': _client_id(), 'redirect_uri': redirect_uri, 'state': state})}"
+
+
+def exchange_code_for_token(code: str, redirect_uri: str | None = None) -> str:
+    client_id = _client_id()
+    client_secret = os.environ.get("GITHUB_OAUTH_CLIENT_SECRET")
+    if not client_secret:
+        raise GitHubOAuthConfigError(
+            "GITHUB_OAUTH_CLIENT_SECRET must be set. Register a GitHub OAuth App at "
+            "https://github.com/settings/developers to get it."
         )
 
     try:
+        data = {"client_id": client_id, "client_secret": client_secret, "code": code}
+        if redirect_uri:
+            data["redirect_uri"] = redirect_uri
         response = httpx.post(
             GITHUB_OAUTH_TOKEN_URL,
             headers={"Accept": "application/json"},
-            data={"client_id": client_id, "client_secret": client_secret, "code": code},
+            data=data,
             timeout=10.0,
         )
     except httpx.RequestError as exc:

@@ -32,6 +32,8 @@ class FailureDetector:
         """Returns (is_failure, reason, detail)."""
 
         if protocol_error is not None:
+            if isinstance(protocol_error, TimeoutError):
+                return True, FailureReason.TIMEOUT, str(protocol_error)
             return True, FailureReason.PROTOCOL_ERROR, str(protocol_error)
 
         if response is None:

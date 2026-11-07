@@ -113,17 +113,19 @@ def build_registry() -> CompensationRegistry:
         ActionSpec(
             tool_name="commit_file",
             category=ActionCategory.COMPENSABLE,
-            compensating_tool="revert_last_commit",
+            compensating_tool="revert_commit",
             compensation_arg_mapper=lambda args: {},
+            compensation_result_arg_mapping={"commit_sha": "commit_sha"},
         )
     )
-    registry.register(ActionSpec(tool_name="revert_last_commit", category=ActionCategory.COMPENSABLE, compensating_tool="_noop_revert"))
+    registry.register(ActionSpec(tool_name="revert_commit", category=ActionCategory.COMPENSABLE, compensating_tool="_noop_revert"))
     registry.register(
         ActionSpec(
             tool_name="seed_database",
             category=ActionCategory.COMPENSABLE,
             compensating_tool="wipe_database",
             compensation_arg_mapper=lambda args: {},
+            compensation_result_arg_mapping={"record_ids": "record_ids"},
         )
     )
     registry.register(ActionSpec(tool_name="wipe_database", category=ActionCategory.COMPENSABLE, compensating_tool="_noop_wipe"))
@@ -143,7 +145,7 @@ def main() -> None:
     invoker = MultiServerToolInvoker()
     invoker.register_tools(
         ServerConfig(command=sys.executable, args=["-m", "src.mcp_servers.git_server", str(repo_dir)]),
-        tool_names=["create_branch", "delete_branch", "commit_file", "revert_last_commit"],
+        tool_names=["create_branch", "delete_branch", "commit_file", "revert_commit"],
     )
     invoker.register_tools(
         ServerConfig(command=sys.executable, args=["-m", "src.mcp_servers.db_server", str(db_path)]),

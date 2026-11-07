@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import re
 from pathlib import Path
 
 from mcp.server.mcpserver import MCPServer
@@ -61,22 +62,117 @@ def delete_branch(branch_name: str) -> dict:
 @server.tool()
 def commit_file(path: str, content: str, message: str) -> dict:
     """Write content to a file inside the repo and commit it."""
-    target = REPO_PATH / path
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content)
+    repo = REPO_PATH.resolve()
+    target = (repo / path).resolve()
+    if not target.is_relative_to(repo) or target == repo:
+        return {"status": "error", "message": "File path must stay inside the repository."}
 
-    add_result = _run_git("add", path)
+    staged_changes = subprocess.run(
+        ["git", "-C", str(repo), "diff", "--cached", "--quiet"],
+        capture_output=True,
+        timeout=15,
+    )
+    if staged_changes.returncode != 0:
+        return {"status": "error", "message": "Refusing to commit while unrelated changes are staged."}
+
+    relative_path = target.relative_to(repo).as_posix()
+    path_status = subprocess.run(
+        ["git", "-C", str(repo), "status", "--porcelain", "--", relative_path],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    if path_status.returncode != 0:
+        return {"status": "error", "message": path_status.stderr.strip()}
+    if path_status.stdout.strip():
+        return {"status": "error", "message": "Refusing to overwrite a file with uncommitted changes."}
+
+    tracked_status = subprocess.run(
+        ["git", "-C", str(repo), "ls-files", "--error-unmatch", "--", relative_path],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    if tracked_status.returncode > 1:
+        return {"status": "error", "message": tracked_status.stderr.strip()}
+    if target.exists() and tracked_status.returncode != 0:
+        return {"status": "error", "message": "Refusing to overwrite an existing untracked file."}
+
+    existed = target.exists()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+    add_result = _run_git("add", "--", relative_path)
     if add_result["status"] == "error":
+        cleanup_error = _restore_failed_commit(target, relative_path, existed)
+        if cleanup_error:
+            return {
+                "status": "error",
+                "message": f"{add_result['message']} Cleanup also failed: {cleanup_error}",
+            }
         return add_result
 
-    return _run_git("commit", "-m", message)
+    commit_result = _run_git("commit", "-m", message)
+    if commit_result["status"] == "error":
+        cleanup_error = _restore_failed_commit(target, relative_path, existed)
+        if cleanup_error:
+            return {
+                "status": "error",
+                "message": f"{commit_result['message']} Cleanup also failed: {cleanup_error}",
+            }
+        return commit_result
+
+    commit_sha = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=15,
+    ).stdout.strip()
+    return {"status": "ok", "message": commit_result["message"], "commit_sha": commit_sha}
 
 
 @server.tool()
-def revert_last_commit() -> dict:
-    """Undo the most recent commit, keeping working tree changes staged
-    for inspection. Compensates commit_file."""
-    return _run_git("reset", "--hard", "HEAD~1")
+def revert_commit(commit_sha: str) -> dict:
+    """Create a new revert commit for the exact commit made by commit_file."""
+    if not re.fullmatch(r"[0-9a-f]{40,64}", commit_sha):
+        return {"status": "error", "message": "A full Git commit hash is required."}
+    repo = REPO_PATH.resolve()
+    exists = subprocess.run(
+        ["git", "-C", str(repo), "cat-file", "-e", f"{commit_sha}^{{commit}}"],
+        capture_output=True,
+        timeout=15,
+    )
+    if exists.returncode != 0:
+        return {"status": "error", "message": "The commit to revert does not exist in this repository."}
+    ancestor = subprocess.run(
+        ["git", "-C", str(repo), "merge-base", "--is-ancestor", commit_sha, "HEAD"],
+        capture_output=True,
+        timeout=15,
+    )
+    if ancestor.returncode != 0:
+        return {"status": "error", "message": "The commit to revert is not an ancestor of the current branch."}
+    return _run_git("revert", "--no-edit", commit_sha)
+
+
+def _restore_failed_commit(
+    target: Path, relative_path: str, existed: bool
+) -> str | None:
+    errors = []
+    if existed:
+        result = _run_git(
+            "restore", "--source=HEAD", "--staged", "--worktree", "--", relative_path
+        )
+        if result["status"] == "error":
+            errors.append(result["message"])
+    else:
+        result = _run_git("rm", "--cached", "--ignore-unmatch", "--", relative_path)
+        if result["status"] == "error":
+            errors.append(result["message"])
+        try:
+            target.unlink(missing_ok=True)
+        except OSError as exc:
+            errors.append(str(exc))
+    return "; ".join(errors) or None
 
 
 if __name__ == "__main__":

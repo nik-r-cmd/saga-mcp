@@ -27,7 +27,7 @@ from typing import Any, Callable
 from src.logging_utils.audit_log import AuditEntry, AuditLog, now_ms
 from src.saga.dead_letter import DeadLetterEntry, DeadLetterQueue
 from src.saga.failure_detection import FailureDetector
-from src.saga.models import SagaStatus, SagaStep, StepStatus
+from src.saga.models import ActionSpec, SagaStatus, SagaStep, StepStatus
 from src.saga.registry import CompensationRegistry
 from src.saga.tracker import SagaTracker
 
@@ -95,7 +95,23 @@ class SagaExecutor:
                 step.failure_reason = reason
                 step.failure_detail = detail
                 self._log(saga_id, step, "BLOCKED", detail, latency_ms)
+                outcome_unknown = protocol_error is not None or bool(
+                    response and response.get("_outcome_unknown")
+                )
+                if outcome_unknown:
+                    spec = self._registry.get(tool_name)
+                    self._write_dead_letter(
+                        saga_id,
+                        step,
+                        spec.compensating_tool,
+                        failure_detail=(
+                            "Forward call outcome is unknown; inspect external state before "
+                            f"applying compensation. Original failure: {detail}"
+                        ),
+                    )
                 self._rollback(tracker, saga_id)
+                if outcome_unknown:
+                    tracker.record.status = SagaStatus.DEAD_LETTER
                 return tracker
 
             step.status = StepStatus.SUCCEEDED
@@ -205,7 +221,13 @@ class SagaExecutor:
         else:
             tracker.record.status = SagaStatus.ROLLED_BACK
 
-    def _write_dead_letter(self, saga_id: str, step: SagaStep, compensating_tool: str | None) -> None:
+    def _write_dead_letter(
+        self,
+        saga_id: str,
+        step: SagaStep,
+        compensating_tool: str | None,
+        failure_detail: str | None = None,
+    ) -> None:
         if self._dlq is None:
             return
         self._dlq.add(
@@ -215,13 +237,13 @@ class SagaExecutor:
                 tool_name=step.tool_name,
                 compensating_tool=compensating_tool,
                 arguments=step.arguments,
-                failure_detail=step.failure_detail or "compensation failed after retries",
+                failure_detail=failure_detail or step.failure_detail or "compensation failed after retries",
                 timestamp=now_ms(),
                 compensation_attempts=step.compensation_attempts,
             )
         )
 
-    def _compensate_with_retries(self, step: SagaStep, spec) -> bool:
+    def _compensate_with_retries(self, step: SagaStep, spec: ActionSpec) -> bool:
         if spec.compensating_tool is None:
             return False  # should be unreachable for COMPENSABLE tools,
             # guarded already at registration time
@@ -233,12 +255,32 @@ class SagaExecutor:
         # rejecting them). Falls back to identity only when no mapper is
         # declared, for backward compatibility with tools that genuinely
         # share an identical schema.
-        if spec.compensation_arg_mapper is not None:
-            compensation_args = spec.compensation_arg_mapper(step.arguments)
-        else:
-            compensation_args = step.arguments
+        try:
+            if spec.compensation_arg_mapper is not None:
+                compensation_args = spec.compensation_arg_mapper(step.arguments)
+            else:
+                compensation_args = step.arguments
 
-        for attempt in range(1, spec.max_retries + 1):
+            if spec.compensation_result_arg_mapping:
+                if step.result is None or any(
+                    source not in step.result
+                    for source in spec.compensation_result_arg_mapping.values()
+                ):
+                    step.failure_detail = "Compensation result mapping references missing result data."
+                    return False
+                compensation_args = {
+                    **compensation_args,
+                    **{
+                        target: step.result[source]
+                        for target, source in spec.compensation_result_arg_mapping.items()
+                    },
+                }
+        except (KeyError, TypeError, ValueError) as exc:
+            step.failure_detail = f"Could not map compensation arguments: {exc}"
+            return False
+
+        attempts = spec.max_retries if spec.idempotent else 1
+        for attempt in range(1, attempts + 1):
             step.compensation_attempts = attempt
             response, protocol_error = self._safe_invoke(
                 spec.compensating_tool, compensation_args
@@ -246,9 +288,4 @@ class SagaExecutor:
             is_failure, _, _ = self._detector.check(response, protocol_error)
             if not is_failure:
                 return True
-            # idempotent compensations are safe to retry as-is; a
-            # non-idempotent one that fails is more dangerous to retry
-            # blindly, but for this project's scope we still retry and
-            # rely on the DLQ + audit trail for human review rather than
-            # guessing at more complex recovery logic.
         return False

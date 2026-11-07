@@ -8,6 +8,7 @@ from scripts.run_benchmark import (
     external_state,
     matches_expected_state,
     setup_repo,
+    summarize,
 )
 
 
@@ -48,3 +49,34 @@ def test_external_state_oracle_checks_repository_and_database(tmp_path):
         )
 
     assert matches_expected_state(repo, database, baseline, branch, should_complete=True)
+
+
+def test_summary_includes_confidence_intervals_and_excludes_gatekeeper_latency():
+    trials = [
+        {"state_consistent": True, "task_completed": True, "latency_ms": 10.0},
+        {"state_consistent": True, "task_completed": False, "latency_ms": 12.0},
+        {"state_consistent": False, "task_completed": True, "latency_ms": 14.0},
+        {"state_consistent": True, "task_completed": True, "latency_ms": 16.0},
+    ]
+    summary = summarize(
+        {
+            "Saga-MCP": {0.0: trials},
+            "Read-Only Gatekeeper": {
+                0.0: [
+                    {"state_consistent": True, "task_completed": False, "latency_ms": 0.1},
+                    {"state_consistent": True, "task_completed": False, "latency_ms": 0.1},
+                ]
+            },
+        }
+    )
+
+    saga = summary["Saga-MCP"][0.0]
+    assert saga["state_consistency_rate"] == 0.75
+    assert saga["state_consistency_95ci"][0] < 0.75 < saga["state_consistency_95ci"][1]
+    assert saga["task_completion_95ci"][0] < 0.75 < saga["task_completion_95ci"][1]
+    assert saga["avg_latency_ms"] == 13.0
+    assert saga["avg_latency_95ci_ms"][0] < 13.0 < saga["avg_latency_95ci_ms"][1]
+
+    gatekeeper = summary["Read-Only Gatekeeper"][0.0]
+    assert gatekeeper["avg_latency_ms"] is None
+    assert gatekeeper["avg_latency_95ci_ms"] is None

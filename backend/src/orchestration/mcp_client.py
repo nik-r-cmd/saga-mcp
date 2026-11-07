@@ -40,7 +40,7 @@ class MultiServerToolInvoker:
         invoker = MultiServerToolInvoker()
         invoker.register_tools(
             ServerConfig(command="python", args=["-m", "src.mcp_servers.git_server", repo_path]),
-            tool_names=["create_branch", "delete_branch", "commit_file", "revert_last_commit"],
+            tool_names=["create_branch", "delete_branch", "commit_file", "revert_commit"],
         )
         invoker("create_branch", {"branch_name": "feature/x"})
     """
@@ -59,7 +59,15 @@ class MultiServerToolInvoker:
                 "Call register_tools() first."
             )
         server = self._tool_to_server[tool_name]
-        return asyncio.run(self._call_async(server, tool_name, arguments))
+        try:
+            return asyncio.run(
+                asyncio.wait_for(
+                    self._call_async(server, tool_name, arguments),
+                    timeout=60,
+                )
+            )
+        except asyncio.TimeoutError as exc:
+            raise TimeoutError(f"MCP call '{tool_name}' timed out after 60 seconds.") from exc
 
     @staticmethod
     async def _call_async(
@@ -81,7 +89,11 @@ class MultiServerToolInvoker:
         async with stdio_client(params) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
-                result = await session.call_tool(tool_name, arguments)
+                result = await session.call_tool(
+                    tool_name,
+                    arguments,
+                    read_timeout_seconds=60,
+                )
                 return _extract_payload(result)
 
 
@@ -89,16 +101,38 @@ def _extract_payload(result: Any) -> dict:
     """MCP tool results wrap the actual return value in a content block.
     This pulls out our tools' plain dict payload (they all return
     JSON-serializable dicts like {"status": "ok", ...})."""
-    if hasattr(result, "structuredContent") and result.structuredContent:
-        return result.structuredContent
-    if hasattr(result, "content") and result.content:
-        first = result.content[0]
-        text = getattr(first, "text", None)
-        if text:
-            import json
+    content = getattr(result, "content", None) or []
+    message = "\n".join(
+        text for block in content if (text := getattr(block, "text", None))
+    )
+    if getattr(result, "is_error", False):
+        return {
+            "status": "error",
+            "message": message or "MCP server reported an error.",
+            "_outcome_unknown": True,
+        }
 
-            try:
-                return json.loads(text)
-            except json.JSONDecodeError:
-                return {"status": "ok", "message": text}
-    return {"status": "error", "message": "empty or unparseable MCP result"}
+    structured = getattr(result, "structured_content", None)
+    if isinstance(structured, dict):
+        return structured
+    if message:
+        import json
+
+        try:
+            payload = json.loads(message)
+        except json.JSONDecodeError:
+            return {
+                "status": "error",
+                "message": f"Unstructured MCP result: {message}",
+                "_outcome_unknown": True,
+            }
+        return payload if isinstance(payload, dict) else {
+            "status": "error",
+            "message": "MCP result was not an object.",
+            "_outcome_unknown": True,
+        }
+    return {
+        "status": "error",
+        "message": "Empty MCP result.",
+        "_outcome_unknown": True,
+    }

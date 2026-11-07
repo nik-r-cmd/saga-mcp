@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import sqlite3
 import sys
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -23,11 +24,17 @@ DB_PATH = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("saga_demo.sqlite3")
 
 
 def _connect() -> sqlite3.Connection:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.execute(
         "CREATE TABLE IF NOT EXISTS records (id INTEGER PRIMARY KEY, payload TEXT NOT NULL)"
     )
     return conn
+
+
+def initialize_database() -> None:
+    with closing(_connect()) as conn:
+        conn.commit()
 
 
 @server.tool()
@@ -38,27 +45,35 @@ def seed_database(rows: list[str]) -> dict:
     if not rows:
         return {"status": "error", "message": "no rows provided to seed"}
     try:
-        conn = _connect()
-        conn.executemany(
-            "INSERT INTO records (payload) VALUES (?)", [(r,) for r in rows]
-        )
-        conn.commit()
-        conn.close()
-        return {"status": "ok", "message": f"inserted {len(rows)} rows"}
+        with closing(_connect()) as conn:
+            record_ids = []
+            for row in rows:
+                cursor = conn.execute("INSERT INTO records (payload) VALUES (?)", (row,))
+                record_ids.append(cursor.lastrowid)
+            conn.commit()
+            return {
+                "status": "ok",
+                "message": f"inserted {len(rows)} rows",
+                "record_ids": record_ids,
+            }
     except sqlite3.Error as exc:
         return {"status": "error", "message": str(exc)}
 
 
 @server.tool()
-def wipe_database() -> dict:
-    """Delete all rows from the records table. Compensates
-    seed_database."""
+def wipe_database(record_ids: list[int]) -> dict:
+    """Delete only the rows inserted by the corresponding seed_database call."""
+    if not record_ids or any(not isinstance(record_id, int) or isinstance(record_id, bool) for record_id in record_ids):
+        return {"status": "error", "message": "A non-empty list of inserted record IDs is required."}
     try:
-        conn = _connect()
-        conn.execute("DELETE FROM records")
-        conn.commit()
-        conn.close()
-        return {"status": "ok", "message": "table wiped"}
+        placeholders = ",".join("?" for _ in record_ids)
+        with closing(_connect()) as conn:
+            cursor = conn.execute(
+                f"DELETE FROM records WHERE id IN ({placeholders})",
+                record_ids,
+            )
+            conn.commit()
+        return {"status": "ok", "message": f"removed {cursor.rowcount} inserted rows"}
     except sqlite3.Error as exc:
         return {"status": "error", "message": str(exc)}
 
@@ -67,11 +82,11 @@ def wipe_database() -> dict:
 def count_rows() -> dict:
     """Utility tool, not part of any saga - lets the demo script verify
     state before/after without needing raw SQL in the demo itself."""
-    conn = _connect()
-    count = conn.execute("SELECT COUNT(*) FROM records").fetchone()[0]
-    conn.close()
-    return {"status": "ok", "count": count}
+    with closing(_connect()) as conn:
+        count = conn.execute("SELECT COUNT(*) FROM records").fetchone()[0]
+        return {"status": "ok", "count": count}
 
 
 if __name__ == "__main__":
+    initialize_database()
     server.run()  # synchronous entry point; runs run_stdio_async() internally

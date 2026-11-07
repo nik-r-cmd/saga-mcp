@@ -71,6 +71,7 @@ def build_registry() -> CompensationRegistry:
             category=ActionCategory.COMPENSABLE,
             compensating_tool="wipe_database",
             compensation_arg_mapper=lambda args: {},
+            compensation_result_arg_mapping={"record_ids": "record_ids"},
         )
     )
     registry.register(ActionSpec(tool_name="wipe_database", category=ActionCategory.COMPENSABLE, compensating_tool="_noop"))

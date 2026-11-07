@@ -77,12 +77,12 @@ class ActionSpec:
     category: ActionCategory
     compensating_tool: str | None = None  # required if COMPENSABLE,
     # ignored if PIVOT
-    idempotent: bool = True  # can the compensating call be safely retried
+    idempotent: bool = False  # retries require explicit approval
     # more than once without side effects compounding? Declared explicitly
-    # rather than assumed - a false assumption here is exactly how you get
-    # duplicate refunds / double-deletes in real systems.
+    # rather than assumed; retries default off unless approved.
     max_retries: int = 3
     compensation_arg_mapper: Callable[[dict[str, Any]], dict[str, Any]] | None = None
+    compensation_result_arg_mapping: dict[str, str] | None = None
     # Maps the FORWARD call's arguments to the arguments the COMPENSATING
     # call needs. Explicit by design: the previous behavior (silently
     # reusing the forward call's arguments as-is) only "worked" because

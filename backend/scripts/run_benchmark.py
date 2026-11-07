@@ -33,10 +33,13 @@ import random
 import shutil
 import sqlite3
 import stat
+import statistics
 import subprocess
 import sys
 import tempfile
 import time
+from math import sqrt
+from statistics import NormalDist
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -56,6 +59,25 @@ TRIALS_PER_CONDITION = int(os.environ.get("BENCH_TRIALS", "20"))
 DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent.parent / "benchmark_output" / "paper_final"
 OUTPUT_DIR = Path(os.environ.get("BENCH_OUTPUT_DIR", str(DEFAULT_OUTPUT_DIR)))
 READ_ONLY_MUTATIONS = {"create_branch", "seed_database"}
+_CI_Z = NormalDist().inv_cdf(0.975)
+
+
+def _wilson_interval(successes: int, n: int, z: float = _CI_Z) -> list[float]:
+    if n <= 0 or not 0 <= successes <= n:
+        raise ValueError("A confidence interval needs 0 <= successes <= n and n > 0.")
+    proportion = successes / n
+    denominator = 1 + z**2 / n
+    center = (proportion + z**2 / (2 * n)) / denominator
+    margin = z * sqrt(proportion * (1 - proportion) / n + z**2 / (4 * n**2)) / denominator
+    return [max(0.0, center - margin), min(1.0, center + margin)]
+
+
+def _mean_interval(values: list[float], z: float = _CI_Z) -> list[float] | None:
+    if len(values) < 2:
+        return None
+    mean = statistics.mean(values)
+    margin = z * statistics.stdev(values) / sqrt(len(values))
+    return [mean - margin, mean + margin]
 
 
 def build_fault_schedule(rate, n, seed):
@@ -152,6 +174,7 @@ def build_registry() -> CompensationRegistry:
             category=ActionCategory.COMPENSABLE,
             compensating_tool="wipe_database",
             compensation_arg_mapper=lambda args: {},
+            compensation_result_arg_mapping={"record_ids": "record_ids"},
         )
     )
     registry.register(ActionSpec(tool_name="wipe_database", category=ActionCategory.COMPENSABLE, compensating_tool="_noop"))
@@ -280,14 +303,22 @@ def summarize(results: dict) -> dict:
         summary[system_name] = {}
         for rate, trials in by_rate.items():
             n = len(trials)
+            if n == 0:
+                raise ValueError(f"No trials were recorded for {system_name} at rate {rate}.")
+            consistent_count = sum(t["state_consistent"] for t in trials)
+            completed_count = sum(t["task_completed"] for t in trials)
+            latencies = [t["latency_ms"] for t in trials]
             consistency_rate = sum(t["state_consistent"] for t in trials) / n
             completion_rate = sum(t["task_completed"] for t in trials) / n
             latency_comparable = system_name != "Read-Only Gatekeeper"
-            avg_latency = sum(t["latency_ms"] for t in trials) / n if latency_comparable else None
+            avg_latency = statistics.mean(latencies) if latency_comparable else None
             summary[system_name][rate] = {
                 "state_consistency_rate": consistency_rate,
+                "state_consistency_95ci": _wilson_interval(consistent_count, n),
                 "task_completion_rate": completion_rate,
+                "task_completion_95ci": _wilson_interval(completed_count, n),
                 "avg_latency_ms": avg_latency,
+                "avg_latency_95ci_ms": _mean_interval(latencies) if latency_comparable else None,
                 "latency_comparable": latency_comparable,
             }
     return summary
@@ -316,7 +347,18 @@ def plot_charts(summary: dict) -> None:
     plt.figure(figsize=(7, 5))
     for system_name, by_rate in summary.items():
         values = [by_rate[r]["state_consistency_rate"] * 100 for r in FAILURE_RATES]
-        plt.plot(rates_pct, values, marker="o", label=system_name)
+        intervals = [by_rate[r]["state_consistency_95ci"] for r in FAILURE_RATES]
+        errors = [
+            [
+                (value / 100 - interval[0]) * 100
+                for value, interval in zip(values, intervals, strict=True)
+            ],
+            [
+                (interval[1] - value / 100) * 100
+                for value, interval in zip(values, intervals, strict=True)
+            ],
+        ]
+        plt.errorbar(rates_pct, values, yerr=errors, marker="o", capsize=3, label=system_name)
     plt.xlabel("Fault Injection Rate (%)")
     plt.ylabel("State Consistency Rate (%)")
     plt.title("State Consistency vs Fault Injection Rate")
@@ -347,7 +389,25 @@ def plot_charts(summary: dict) -> None:
     completion_systems = list(summary.keys())
     for i, system_name in enumerate(completion_systems):
         values = [summary[system_name][r]["task_completion_rate"] * 100 for r in FAILURE_RATES]
-        plt.bar([xi + i * width for xi in x], values, width=width, label=system_name)
+        intervals = [summary[system_name][r]["task_completion_95ci"] for r in FAILURE_RATES]
+        errors = [
+            [
+                (value / 100 - interval[0]) * 100
+                for value, interval in zip(values, intervals, strict=True)
+            ],
+            [
+                (interval[1] - value / 100) * 100
+                for value, interval in zip(values, intervals, strict=True)
+            ],
+        ]
+        plt.bar(
+            [xi + i * width for xi in x],
+            values,
+            width=width,
+            yerr=errors,
+            capsize=3,
+            label=system_name,
+        )
     plt.xticks([xi + width for xi in x], [f"{r:.0%}" for r in FAILURE_RATES])
     plt.xlabel("Fault Injection Rate")
     plt.ylabel("Task Completion Rate (%)")
@@ -388,6 +448,10 @@ def main() -> None:
             "latency_clock": "time.perf_counter",
             "latency_comparison": ["Unprotected", "Saga-MCP"],
             "llm_inference": False,
+            "confidence_intervals": {
+                "rates": "95% Wilson score interval",
+                "latency_mean": "95% normal-approximation interval using sample standard deviation",
+            },
         },
         "summary": summary,
         "trials": results,
