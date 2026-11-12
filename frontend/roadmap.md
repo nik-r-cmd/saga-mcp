@@ -1,0 +1,5 @@
+- [ ] Verify auth and GitHub callback flow
+- [ ] Verify repository scan, agent status, task runner, and live event stream
+- [ ] Fix only blockers found in source/runtime checks
+- [ ] Explain and address fast-expiring local-agent access tokens
+- [ ] Re-read roadmap and report completed test surface
